@@ -1,5 +1,7 @@
 package com.clonex.space
 
+import android.app.ActivityManager
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.content.pm.ResolveInfo
@@ -90,6 +92,7 @@ import com.clonex.space.engine.RealVirtualEngine
 import com.clonex.space.engine.VirtualEngine
 import com.clonex.space.ui.CloneXTheme
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -299,13 +302,44 @@ class MainActivity : ComponentActivity() {
     internal suspend fun launchClone(entry: CloneEntry, engine: VirtualEngine): InstallOutcome {
         return try {
             val result = engine.launchApp(entry.packageName, entry.userId)
-            // A failed launch is exactly when the assist prompt helps.
+            if (result !is EngineResult.Ok) {
+                // A failed launch is exactly when the assist prompt helps.
+                val assist = assistIfNeeded(engine, entry.packageName, entry.userId)
+                return InstallOutcome(messageOf(result), assist)
+            }
+            // v2.0.3 — the engine reported success, but on the user's
+            // phone v2.0.1/v2.0.2 both showed "Launching…" forever with
+            // nothing opening. A clone runs in a ":agent.pN" process
+            // under CloneX's own UID; if no agent process is alive 5s
+            // after a reported success, the clone's process died on
+            // start (engine hooks failing on this Android version) —
+            // say that plainly instead of "Launching…" forever.
+            delay(5000)
             val assist = assistIfNeeded(engine, entry.packageName, entry.userId)
-            InstallOutcome(messageOf(result), assist)
+            if (isAgentProcessAlive()) {
+                InstallOutcome(messageOf(result), assist)
+            } else {
+                InstallOutcome(
+                    "Clone could not start — its process did not stay alive. " +
+                    "The engine may not support this Android version.",
+                    assist
+                )
+            }
         } catch (e: Exception) {
             // Never let a launch failure escape into the click handler —
             // an uncaught throw in the coroutine would kill the app.
             InstallOutcome("Launch failed: ${e.message}")
+        }
+    }
+
+    private fun isAgentProcessAlive(): Boolean {
+        return try {
+            val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
+            am.runningAppProcesses?.any {
+                it.processName.startsWith("$packageName:agent")
+            } == true
+        } catch (e: Exception) {
+            true // inconclusive — do not false-alarm
         }
     }
 
@@ -405,7 +439,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.2 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.3 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
