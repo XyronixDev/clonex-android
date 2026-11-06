@@ -12,6 +12,9 @@ interface CloneDao {
     @Query("SELECT * FROM clones ORDER BY installedAt DESC")
     fun getAll(): Flow<List<CloneEntry>>
 
+    @Query("SELECT * FROM clones ORDER BY installedAt DESC")
+    suspend fun getAllOnce(): List<CloneEntry>
+
     @Query("SELECT * FROM clones WHERE packageName = :packageName ORDER BY cloneIndex ASC")
     fun getByPackage(packageName: String): Flow<List<CloneEntry>>
 
@@ -23,6 +26,9 @@ interface CloneDao {
 
     @Query("DELETE FROM clones WHERE packageName = :packageName AND cloneIndex = :cloneIndex")
     suspend fun delete(packageName: String, cloneIndex: Int)
+
+    @Query("UPDATE clones SET isPrivate = :isPrivate WHERE packageName = :packageName AND cloneIndex = :cloneIndex")
+    suspend fun setPrivate(packageName: String, cloneIndex: Int, isPrivate: Boolean)
 
     @Query("DELETE FROM clones")
     suspend fun deleteAll()
