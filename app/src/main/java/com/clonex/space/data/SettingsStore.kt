@@ -33,6 +33,7 @@ class SettingsStore(private val context: Context) {
         private val MAX_CLONES = intPreferencesKey("max_clones")
         private val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
         private val SECRET_PIN = stringPreferencesKey("secret_zone_pin")
+        private val GOOGLE_SUITE = booleanPreferencesKey("google_suite_installed")
 
         const val DEFAULT_MAX_CLONES = 10
         const val MAX_CLONES_CAP = 10
@@ -51,6 +52,13 @@ class SettingsStore(private val context: Context) {
         prefs[SECRET_PIN] ?: ""
     }
 
+    /** True once Google Suite has been installed (drives the
+     *  Install/Remove menu label). Set by MainActivity after a
+     *  successful install or removal. */
+    val googleSuiteInstalled: Flow<Boolean> = context.settingsDataStore.data.map { prefs ->
+        prefs[GOOGLE_SUITE] ?: false
+    }
+
     suspend fun setMaxClones(value: Int) {
         context.settingsDataStore.edit { prefs ->
             prefs[MAX_CLONES] = value.coerceIn(1, MAX_CLONES_CAP)
@@ -66,6 +74,12 @@ class SettingsStore(private val context: Context) {
     suspend fun setSecretPin(pin: String) {
         context.settingsDataStore.edit { prefs ->
             prefs[SECRET_PIN] = pin
+        }
+    }
+
+    suspend fun setGoogleSuiteInstalled(installed: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[GOOGLE_SUITE] = installed
         }
     }
 }
