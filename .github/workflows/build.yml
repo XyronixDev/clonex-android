@@ -26,6 +26,8 @@ on:
 jobs:
   build-release:
     runs-on: ubuntu-latest
+    # Fail fast instead of hanging for hours if a step stalls again.
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -36,19 +38,49 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Gradle 9.8.2
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "9.8.2"
-
-      # Android 17 (API 37) ships as "platforms;android-37.0" on the
-      # preview channel (channel 3); the stable channel only lists up to
-      # android-36. AGP resolves compileSdk 37 from the android-37.0
-      # folder, so symlink it to android-37 as well.
-      - name: Install Android 17 SDK (API 37.0)
+      # NOTE: run #2's "stuck on Provision Gradle" was a stale live-log
+      # view — setup-gradle had actually finished in 22s. Gradle is
+      # still downloaded directly here (curl retries, fails fast, log
+      # shows real progress) instead of the setup action.
+      - name: Install Gradle 9.8.2 (direct download)
+        timeout-minutes: 10
         run: |
-          yes | sdkmanager --licenses > /dev/null 2>&1 || true
-          sdkmanager --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
+          cd "$RUNNER_TEMP"
+          curl -L --retry 3 --retry-delay 5 --max-time 300 \
+            -o gradle-9.8.2-bin.zip \
+            https://services.gradle.org/distributions/gradle-9.8.2-bin.zip
+          unzip -q gradle-9.8.2-bin.zip
+          echo "$RUNNER_TEMP/gradle-9.8.2/bin" >> "$GITHUB_PATH"
+          gradle --version
+
+      # FIX (run #2 failed, exit 127): `sdkmanager` is NOT on the
+      # runner's PATH. It lives under
+      # $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager, so resolve it
+      # by full path — and install cmdline-tools first if it is absent.
+      # ANDROID_HOME is exported to later steps (build + apksigner).
+      - name: Install Android 17 SDK (API 37.0)
+        timeout-minutes: 15
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/lib/android-sdk}"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/bin/sdkmanager"
+          fi
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "cmdline-tools not found — installing them."
+            mkdir -p "$ANDROID_HOME/cmdline-tools"
+            cd "$RUNNER_TEMP"
+            curl -L --retry 3 --retry-delay 5 --max-time 300 \
+              -o cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-13114758_latest.zip
+            unzip -q cmdline-tools.zip -d "$ANDROID_HOME/cmdline-tools"
+            mv "$ANDROID_HOME/cmdline-tools/cmdline-tools" "$ANDROID_HOME/cmdline-tools/latest"
+            SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          fi
+          echo "sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
           if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
             ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
           fi
