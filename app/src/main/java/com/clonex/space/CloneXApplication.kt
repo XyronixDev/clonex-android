@@ -110,7 +110,7 @@ class CloneXApplication : HackApplication() {
                         .append("Android ${Build.VERSION.RELEASE} ")
                         .append("(SDK ${Build.VERSION.SDK_INT}) ")
                         .append("${Build.MANUFACTURER} ${Build.MODEL}\n")
-                        .append("CloneX 2.0.1\n")
+                        .append("CloneX 2.0.2\n")
                         .append(Log.getStackTraceString(throwable))
                         .toString()
                     File(filesDir, CRASH_FILE).writeText(text)
@@ -140,7 +140,7 @@ class CloneXApplication : HackApplication() {
             val quiet = NotificationChannel(
                 ENGINE_CHANNEL_ID,
                 "CloneX engine",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = "Keeps the virtual engine running in the background."
                 setSound(null, null)
