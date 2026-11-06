@@ -26,7 +26,9 @@ import java.io.File
  *  - HackApi.deletePackageData(String, int): int
  *  - HackApi.deletePackageCache(String, int): int
  *  - HackApi.startActivity(Intent, int): int
- *  - HackApi.startPackage(String, int): boolean (deprecated, fallback only)
+ *  - HackApi.startPackage(String, int): boolean (engine's own high-level
+ *    launch — v2.0.3 tries it FIRST after the intent path reported
+ *    success with nothing opening twice)
  *  - HackApi.getLaunchIntentForPackage(String, int): Intent?
  *  - HackApi.killApplication(int, String, String): void
  *  - HackApi.getInstalledPackages(int, int): List<String>
@@ -172,19 +174,23 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                // v2.0.2 — launch exactly like the MultiApp demo
-                // (AppListActivity.startApp). v2.0.0/v2.0.1 used the
-                // engine's getLaunchIntentForPackage FIRST and treated any
-                // startActivity return >= 0 as success — on the user's
-                // phone that reported "Launching Instagram…" while the
-                // clone never opened (return 1 = returned to caller,
-                // i.e. NOT started). The demo instead:
-                //  1. takes the HOST PackageManager's launch intent and
-                //     adds FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
-                //  2. falls back to the engine's getLaunchIntentForPackage
-                //     only for clones the host never had (APK imports);
-                //  3. treats ONLY 0 (START_SUCCESS) as launched — any
-                //     other code is reported, never shown as "Launching…".
+                // v2.0.3 — try the engine's own startPackage FIRST.
+                // v2.0.1 (engine intent first) and v2.0.2 (host intent
+                // first, demo-exact) both reported START_SUCCESS while
+                // nothing opened on the user's phone — the intent path
+                // is not the problem there. startPackage is the engine's
+                // own high-level launch (CMD_START_PACKAGE); if it also
+                // reports success with nothing opening, the failure is
+                // downstream (agent process / AMS hooks on this Android
+                // version) — MainActivity now verifies the agent process
+                // is actually alive 5s after a reported success.
+                @Suppress("DEPRECATION")
+                if (HackApi.startPackage(packageName, userId)) {
+                    return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
+                }
+                // Fallback: the MultiApp demo's intent sequence
+                // (host intent + RESET_TASK_IF_NEEDED, then the engine's
+                // intent), still requiring ret == START_SUCCESS (0).
                 val hostIntent = try {
                     context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
                         addFlags(
@@ -207,15 +213,9 @@ class RealVirtualEngine(
                         EngineResult.Failed("Launch failed (engine code $ret).")
                     }
                 }
-                @Suppress("DEPRECATION")
-                val started = HackApi.startPackage(packageName, userId)
-                if (started) {
-                    EngineResult.Ok("Launching ${hostLabel(packageName)}…")
-                } else {
-                    EngineResult.Failed(
-                        "No launchable activity found for $packageName in this space."
-                    )
-                }
+                EngineResult.Failed(
+                    "No launchable activity found for $packageName in this space."
+                )
             } catch (e: Exception) {
                 Log.w(TAG, "launchApp failed", e)
                 EngineResult.Failed("Launch failed: ${e.message}")
@@ -381,6 +381,11 @@ class RealVirtualEngine(
         userId: Int,
         apkPath: String?
     ) {
+        // v2.0.3: engine support packages are NEVER library entries.
+        // The listClones() filter (v2.0.2) only covered the sync path —
+        // installFromHost/installApkFiles inserted gms/gsf/vending
+        // straight into Room, so the Google cards stayed on home.
+        if (packageName in INTERNAL_PACKAGES) return
         dao.insert(
             CloneEntry(
                 packageName = packageName,
