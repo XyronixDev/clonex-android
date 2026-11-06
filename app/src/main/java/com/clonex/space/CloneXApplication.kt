@@ -110,7 +110,7 @@ class CloneXApplication : HackApplication() {
                         .append("Android ${Build.VERSION.RELEASE} ")
                         .append("(SDK ${Build.VERSION.SDK_INT}) ")
                         .append("${Build.MANUFACTURER} ${Build.MODEL}\n")
-                        .append("CloneX 2.0.3\n")
+                        .append("CloneX 2.0.4\n")
                         .append(Log.getStackTraceString(throwable))
                         .toString()
                     File(filesDir, CRASH_FILE).writeText(text)
