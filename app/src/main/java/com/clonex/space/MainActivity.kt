@@ -1,5 +1,6 @@
 package com.clonex.space
 
+import android.Manifest
 import android.app.ActivityManager
 import android.content.Context
 import android.content.Intent
@@ -17,6 +18,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -107,6 +109,9 @@ import java.util.concurrent.ConcurrentHashMap
  *    (Beta)", HOT section, A-Z list with a right-side alphabet index.
  *  - Long-press a clone: Launch / Clear data / Clear cache /
  *    Kill app / Remove.
+ *  - Permissions (v2.0.7): CloneX asks for camera / mic / location /
+ *    contacts / photos on first launch — a clone can only use what
+ *    the host is granted, so without these the clone's features fail.
  *
  * Room stays the UI cache; the engine is the source of truth for installs
  * (reconciled once at startup: engine-installed clones missing from the
@@ -467,7 +472,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.6 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.7 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
@@ -732,6 +737,9 @@ private fun CloneXApp(
     val googleSuiteInstalled by settings.googleSuiteInstalled.collectAsStateWithLifecycle(
         initialValue = false
     )
+    val permissionsRequested by settings.permissionsRequested.collectAsStateWithLifecycle(
+        initialValue = null
+    )
 
     var screen by remember { mutableStateOf(Screen.HOME) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -743,6 +751,59 @@ private fun CloneXApp(
     var deviceInfoText by remember { mutableStateOf<String?>(null) }
     var installedApps by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
     val scope = rememberCoroutineScope()
+
+    // v2.0.7 — a clone can only use what the HOST is granted: the engine
+    // forwards CloneX's permissions into the virtual space. A clone that
+    // asks for camera / photos / location / contacts is denied when
+    // CloneX itself was never granted them (the DarkPulse screenshot:
+    // Camera, Contacts, Location, Microphone all "Not allowed"). So
+    // CloneX declares them in the manifest and asks once on first
+    // launch; Settings can re-ask later.
+    val context = LocalContext.current
+    val clonePermissions: Array<String> = if (Build.VERSION.SDK_INT >= 33) {
+        arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.READ_MEDIA_IMAGES,
+            Manifest.permission.READ_MEDIA_VIDEO,
+            Manifest.permission.READ_MEDIA_AUDIO
+        )
+    } else {
+        arrayOf(
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.READ_PHONE_STATE,
+            Manifest.permission.READ_EXTERNAL_STORAGE,
+            Manifest.permission.WRITE_EXTERNAL_STORAGE
+        )
+    }
+    val requestClonePermissions = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { results ->
+        val granted = results.count { it.value }
+        status = if (granted == results.size) {
+            "All ${results.size} permissions granted — clones can now use camera, photos, location and contacts."
+        } else {
+            "$granted of ${results.size} permissions granted. Denied ones stay off for clones — re-grant them from Settings → Grant app permissions, or system Settings → Apps → CloneX → Permissions."
+        }
+        scope.launch { settings.setPermissionsRequested(true) }
+    }
+    LaunchedEffect(permissionsRequested) {
+        if (permissionsRequested == false) {
+            val missing = clonePermissions.filter {
+                ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+            }
+            if (missing.isNotEmpty()) requestClonePermissions.launch(missing.toTypedArray())
+            scope.launch { settings.setPermissionsRequested(true) }
+        }
+    }
 
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
 
@@ -989,6 +1050,24 @@ private fun CloneXApp(
                             }
                         )
                     }
+                    TextButton(
+                        onClick = {
+                            showSettings = false
+                            requestClonePermissions.launch(clonePermissions)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            "Grant app permissions",
+                            modifier = Modifier.fillMaxWidth(),
+                            textAlign = TextAlign.Start
+                        )
+                    }
+                    Text(
+                        "Camera, photos, location, contacts — a clone can only use what CloneX itself is granted.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                     TextButton(
                         onClick = { showSettings = false; showLicenses = true },
                         modifier = Modifier.fillMaxWidth()
