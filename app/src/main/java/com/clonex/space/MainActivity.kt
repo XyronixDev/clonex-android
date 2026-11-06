@@ -81,7 +81,6 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clonex.space.data.CloneDao
 import com.clonex.space.data.CloneDatabase
@@ -100,8 +99,8 @@ import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * CloneX v2.0 — light-mode UI styled like the MultiApp screenshots, on the
- * real MultiApp opensdk virtual engine (RealVirtualEngine / HackApi).
+ * CloneX v3.0 — light-mode UI, on the NewBlackbox virtual engine
+ * (RealVirtualEngine / BlackBoxCore).
  *
  *  - Home (v2.0.6): blank — only the clone grid and the blue circular
  *    + FAB bottom-right. Everything else lives in the + menu.
@@ -118,11 +117,11 @@ import java.util.concurrent.ConcurrentHashMap
  * (reconciled once at startup: engine-installed clones missing from the
  * library are added back).
  *
- * NOTE on the assist package: 32-bit-only clones need the assist APK
- * (com.clonex.space.assist, built by the :assist module in CI and bundled
- * as assets/assist.apk). When the engine reports request_assistant for a
- * clone and the assist package is not installed on the phone, the user is
- * prompted to install it through the normal system installer.
+ * v3.0 replaces the MultiApp opensdk engine: its server rejected every
+ * clone launch on the user's phone (engine code 102). NewBlackbox's
+ * launch is a single boolean and it handles split APKs (Instagram etc.)
+ * via the MaxCloner patch applied to Bcore in CI. No assist package:
+ * NewBlackbox runs clones in the host's own :pN stub processes.
  */
 class MainActivity : ComponentActivity() {
 
@@ -177,11 +176,6 @@ class MainActivity : ComponentActivity() {
             val result = engine.installPackageAsUser(outFile.absolutePath, userId)
             InstallOutcome(
                 message = messageOf(result),
-                assist = if (result is EngineResult.Ok) {
-                    assistIfNeeded(engine, packageName, userId)
-                } else {
-                    null
-                },
                 success = result is EngineResult.Ok
             )
         } catch (e: Exception) {
@@ -261,11 +255,6 @@ class MainActivity : ComponentActivity() {
             val result = engine.installApkFiles(dir.absolutePath, userId)
             InstallOutcome(
                 message = messageOf(result),
-                assist = if (result is EngineResult.Ok) {
-                    assistIfNeeded(engine, packageName, userId)
-                } else {
-                    null
-                },
                 success = result is EngineResult.Ok
             )
         } catch (e: Exception) {
@@ -290,11 +279,6 @@ class MainActivity : ComponentActivity() {
             val result = engine.installFromHost(packageName, userId)
             InstallOutcome(
                 message = messageOf(result),
-                assist = if (result is EngineResult.Ok) {
-                    assistIfNeeded(engine, packageName, userId)
-                } else {
-                    null
-                },
                 success = result is EngineResult.Ok
             )
         } catch (e: Exception) {
@@ -313,26 +297,22 @@ class MainActivity : ComponentActivity() {
                 engine.launchApp(entry.packageName, entry.userId)
             } ?: EngineResult.Failed("Launch timed out — the engine did not respond.")
             if (result !is EngineResult.Ok) {
-                // A failed launch is exactly when the assist prompt helps.
-                val assist = assistIfNeeded(engine, entry.packageName, entry.userId)
-                return InstallOutcome(messageOf(result), assist)
+                return InstallOutcome(messageOf(result))
             }
             // v2.0.3 — the engine reported success, but on the user's
             // phone v2.0.1/v2.0.2 both showed "Launching…" forever with
-            // nothing opening. A clone runs in a ":agent.pN" process
-            // under CloneX's own UID; if no agent process is alive 5s
+            // nothing opening. A clone runs in a ":pN" stub process
+            // under CloneX's own UID; if no :pN process is alive 5s
             // after a reported success, the clone's process died on
             // start (engine hooks failing on this Android version) —
             // say that plainly instead of "Launching…" forever.
             delay(5000)
-            val assist = assistIfNeeded(engine, entry.packageName, entry.userId)
             if (isAgentProcessAlive()) {
-                InstallOutcome(messageOf(result), assist)
+                InstallOutcome(messageOf(result))
             } else {
                 InstallOutcome(
                     "Clone could not start — its process did not stay alive. " +
-                    "The engine may not support this Android version.",
-                    assist
+                    "The engine may not support this Android version."
                 )
             }
         } catch (e: Exception) {
@@ -346,7 +326,7 @@ class MainActivity : ComponentActivity() {
         return try {
             val am = getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
             am.runningAppProcesses?.any {
-                it.processName.startsWith("$packageName:agent")
+                it.processName.startsWith("$packageName:p")
             } == true
         } catch (e: Exception) {
             true // inconclusive — do not false-alarm
@@ -392,83 +372,38 @@ class MainActivity : ComponentActivity() {
      * and is what clones got redirected to. removeGoogleSuite still
      * uninstalls all four, so an older install gets cleaned up.
      */
+    /** v3.0 — Google Suite is now the engine's own GMS install
+     *  (installGms), not host packages cloned one by one. The Play
+     *  Store app itself crashes inside NewBlackbox (open upstream issue:
+     *  SecurityException on LocaleManager.setApplicationLocales), so the
+     *  Suite is GMS-only (gms + gsf) — no Play Store app, no vending. */
     internal suspend fun installGoogleSuite(engine: VirtualEngine): String =
         withContext(Dispatchers.IO) {
             try {
-                // v2.0.2: one short line, never the per-package wall of
-                // text the user called out. The Google support packages
-                // (gms / gsf / vending) are engine internals — they are
-                // filtered out of the home clone list (INTERNAL_PACKAGES).
-                var anyOk = false
-                var firstFailure: String? = null
-                fun note(result: EngineResult) {
-                    when (result) {
-                        is EngineResult.Ok -> anyOk = true
-                        is EngineResult.Failed -> {
-                            // v2.0.5: "already installed" means the Suite
-                            // IS there — count it as present so the menu
-                            // flips to Remove instead of offering Install
-                            // again for a Suite that already exists.
-                            if (result.reason.contains("already installed")) {
-                                anyOk = true
-                            } else if (firstFailure == null) {
-                                firstFailure = result.reason
-                            }
-                        }
-                        is EngineResult.NotImplemented ->
-                            if (firstFailure == null) firstFailure = result.reason
-                    }
+                if (engine.isGmsInstalled(0)) {
+                    return@withContext "Google Suite ready."
                 }
-                for (pkg in listOf(
-                    "com.google.android.gms",
-                    "com.google.android.gsf"
-                )) {
-                    if (!isPackageInstalledOnHost(pkg)) continue
-                    note(engine.installFromHost(pkg, 0))
-                }
-                if (anyOk) {
-                    "Google Suite ready."
-                } else {
-                    "Google Suite: ${firstFailure ?: "could not install"}"
+                when (val result = engine.installGms(0)) {
+                    is EngineResult.Ok -> "Google Suite ready."
+                    else -> "Google Suite: ${messageOf(result)}"
                 }
             } catch (e: Exception) {
                 "Google Suite install failed: ${e.message}"
             }
         }
 
-    /** v2.0.5 — remove Google Suite (the user asked for a Remove
+    /** v3.0 — remove Google Suite (the user asked for a Remove
      *  option: the + menu kept offering Install even after the Suite
-     *  was already installed). Uninstalls the Play Store client plus
-     *  the three support packages from the virtual space. */
+     *  was already installed). Uninstalls GMS from the virtual space. */
     internal suspend fun removeGoogleSuite(engine: VirtualEngine): String =
         withContext(Dispatchers.IO) {
             try {
-                var anyOk = false
-                var firstFailure: String? = null
-                for (pkg in listOf(
-                    "com.waxmoon.ma.gp",
-                    "com.google.android.gms",
-                    "com.google.android.gsf",
-                    "com.android.vending"
-                )) {
-                    when (val result = engine.uninstallPackage(pkg, 0)) {
-                        is EngineResult.Ok -> anyOk = true
-                        is EngineResult.Failed -> {
-                            // Already gone counts as removed.
-                            if (result.reason.contains("engine code")) {
-                                anyOk = true
-                            } else if (firstFailure == null) {
-                                firstFailure = result.reason
-                            }
-                        }
-                        is EngineResult.NotImplemented ->
-                            if (firstFailure == null) firstFailure = result.reason
-                    }
+                if (!engine.isGmsInstalled(0)) {
+                    return@withContext "Google Suite removed."
                 }
-                if (anyOk) {
-                    "Google Suite removed."
-                } else {
-                    "Google Suite: ${firstFailure ?: "could not remove"}"
+                when (val result = engine.uninstallGms(0)) {
+                    is EngineResult.Ok -> "Google Suite removed."
+                    else -> "Google Suite: ${messageOf(result)}"
                 }
             } catch (e: Exception) {
                 "Google Suite remove failed: ${e.message}"
@@ -480,9 +415,9 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.10 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 3.0.0 (targetSdk 28, sideload-only)")
             sb.appendLine(
-                "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
+                "Engine: NewBlackbox (BlackBoxCore) — ${CloneXApplication.engineStatus()}"
             )
             val lastCrash = CloneXApplication.readLastCrash(applicationContext)
             if (lastCrash == null) {
@@ -491,49 +426,9 @@ class MainActivity : ComponentActivity() {
                 sb.appendLine("Last crash:")
                 sb.appendLine(lastCrash)
             }
-            try {
-                val props = engine.runtimeProperties()
-                // v2.0.5: the raw map is mostly null/0 (process/appId/pkg/
-                // space) and reads like an error dump — show only
-                // entries that actually carry a value.
-                val shown = props.filter { (_, v) ->
-                    v != null && v.toString() != "null" && v.toString() != "0"
-                }
-                if (shown.isEmpty()) {
-                    sb.appendLine("Engine properties: (none reported)")
-                } else {
-                    for ((k, v) in shown) sb.appendLine("$k = $v")
-                }
-            } catch (e: Exception) {
-                sb.appendLine("Engine properties: ${e.message}")
-            }
             sb.toString().trim()
         }
 
-    /** Install the bundled 32-bit assist package via the system installer. */
-    internal fun installAssistPackage(): String {
-        return try {
-            val file = File(externalCacheDir ?: cacheDir, "assist.apk")
-            try {
-                assets.open("assist.apk").use { input ->
-                    file.outputStream().use { output -> input.copyTo(output) }
-                }
-            } catch (e: Exception) {
-                return "Assist package is not bundled in this build — " +
-                    "32-bit clones may not launch."
-            }
-            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
-            val intent = Intent(Intent.ACTION_VIEW).apply {
-                setDataAndType(uri, "application/vnd.android.package-archive")
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-            startActivity(intent)
-            "Installing the assist package — confirm the system install prompt."
-        } catch (e: Exception) {
-            "Could not start the assist install: ${e.message}"
-        }
-    }
 
     /** Launchable apps installed on the phone (for the Import Apps screen). */
     internal suspend fun listInstalledApps(): List<Pair<String, String>> =
@@ -561,22 +456,6 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-    internal fun isPackageInstalledOnHost(packageName: String): Boolean {
-        return try {
-            @Suppress("DEPRECATION")
-            if (Build.VERSION.SDK_INT >= 33) {
-                packageManager.getPackageInfo(
-                    packageName,
-                    PackageManager.PackageInfoFlags.of(0)
-                )
-            } else {
-                packageManager.getPackageInfo(packageName, 0)
-            }
-            true
-        } catch (e: Exception) {
-            false
-        }
-    }
 
     internal fun hostLabel(packageName: String): String {
         return try {
@@ -617,41 +496,14 @@ class MainActivity : ComponentActivity() {
             null
         }
     }
-
-    private suspend fun assistIfNeeded(
-        engine: VirtualEngine,
-        packageName: String,
-        userId: Int
-    ): AssistRequest? {
-        return try {
-            if (engine.needsAssist(packageName, userId) &&
-                !isPackageInstalledOnHost(ASSIST_PACKAGE)
-            ) {
-                AssistRequest(packageName, userId)
-            } else {
-                null
-            }
-        } catch (e: Exception) {
-            null
-        }
-    }
-
-    companion object {
-        /** 32-bit assist package (built by the :assist module, see build.yml). */
-        const val ASSIST_PACKAGE = "com.clonex.space.assist"
-    }
 }
 
-/** An install/launch outcome: a message for the status card, plus an
- * optional prompt to install the 32-bit assist package. */
+/** An install/launch outcome: a message for the status card. */
 data class InstallOutcome(
     val message: String,
-    val assist: AssistRequest? = null,
     /** True when the install really succeeded — the UI auto-returns home. */
     val success: Boolean = false
 )
-
-data class AssistRequest(val packageName: String, val userId: Int)
 
 private fun messageOf(result: EngineResult): String = when (result) {
     is EngineResult.Ok -> result.message
@@ -748,7 +600,6 @@ private fun CloneXApp(
 
     var screen by remember { mutableStateOf(Screen.HOME) }
     var status by remember { mutableStateOf<String?>(null) }
-    var assistRequest by remember { mutableStateOf<AssistRequest?>(null) }
     var cloneOptions by remember { mutableStateOf<CloneEntry?>(null) }
     var showSettings by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
@@ -806,7 +657,6 @@ private fun CloneXApp(
         scope.launch {
             val outcome = activity.launchClone(entry, engine)
             status = outcome.message
-            assistRequest = outcome.assist
         }
     }
 
@@ -864,7 +714,6 @@ private fun CloneXApp(
             scope.launch {
                 val outcome = activity.importApkFile(uri, engine, dao, maxClones)
                 status = outcome.message
-                assistRequest = outcome.assist
                 if (outcome.success) screen = Screen.HOME
             }
         }
@@ -876,7 +725,6 @@ private fun CloneXApp(
             scope.launch {
                 val outcome = activity.importApkDirectory(uri, engine, dao, maxClones)
                 status = outcome.message
-                assistRequest = outcome.assist
                 if (outcome.success) screen = Screen.HOME
             }
         }
@@ -913,7 +761,6 @@ private fun CloneXApp(
                 entry.packageName, entry.label, engine, dao, maxClones
             )
             status = outcome.message
-            assistRequest = outcome.assist
             if (outcome.success) screen = Screen.HOME
         }
     }
@@ -949,7 +796,6 @@ private fun CloneXApp(
                 scope.launch {
                     val outcome = activity.addInstalledApp(pkg, label, engine, dao, maxClones)
                     status = outcome.message
-                    assistRequest = outcome.assist
                     if (outcome.success) screen = Screen.HOME
                 }
             }
@@ -958,30 +804,7 @@ private fun CloneXApp(
 
     // --- dialogs ------------------------------------------------------------
 
-    assistRequest?.let { request ->
-        AlertDialog(
-            onDismissRequest = { assistRequest = null },
-            title = { Text("Assist package needed") },
-            text = {
-                Text(
-                    "This app needs the 32-bit assist package " +
-                        "(${MainActivity.ASSIST_PACKAGE}) to run inside the virtual space. " +
-                        "Install it now through the system installer?"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = {
-                    assistRequest = null
-                    status = activity.installAssistPackage()
-                }) { Text("Install") }
-            },
-            dismissButton = {
-                TextButton(onClick = { assistRequest = null }) { Text("Later") }
-            }
-        )
-    }
-
-    cloneOptions?.let { entry ->
+    cloneOptions?.let    cloneOptions?.let { entry ->
         AlertDialog(
             onDismissRequest = { cloneOptions = null },
             title = { Text(entry.label) },
@@ -1082,7 +905,7 @@ private fun CloneXApp(
                         )
                     }
                     Text(
-                        "Engine: MultiApp opensdk (HackApi) • targetSdk 26 • sideload-only",
+                        "Engine: NewBlackbox (BlackBoxCore) • targetSdk 28 • sideload-only",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -1100,14 +923,13 @@ private fun CloneXApp(
             title = { Text("Open source licenses") },
             text = {
                 Text(
-                    "CloneX v2.0 uses the MultiApp opensdk virtual engine by WaxMoon " +
-                        "(https://github.com/WaxMoon/MultiApp, opensdk at " +
-                        "https://github.com/WaxMoon/opensdk), licensed under the GNU " +
-                        "Affero General Public License v3.0 (AGPL-3.0). CloneX source " +
-                        "code is published at https://github.com/XyronixDev/clonex-android " +
-                        "under the same licence. The opensdk is used unmodified except " +
-                        "for the host/assist package names (com.clonex.space / " +
-                        "com.clonex.space.assist) and the CloneX branding."
+                    "CloneX v3.0 uses the NewBlackbox virtual engine by ALEX5402 " +
+                        "(https://github.com/ALEX5402/NewBlackbox), licensed under " +
+                        "the Apache License 2.0. CloneX source code is published " +
+                        "at https://github.com/XyronixDev/clonex-android. The " +
+                        "engine is used with the MaxCloner split-APK patch " +
+                        "(https://github.com/ashiquesheriefofficial-max/MaxCloner, " +
+                        "also Apache-2.0), applied at build time."
                 )
             },
             confirmButton = {
@@ -1144,7 +966,7 @@ private fun CloneOptionButton(label: String, onClick: () -> Unit) {
 }
 
 // ---------------------------------------------------------------------------
-// Home screen (light, MultiApp-style)
+// Home screen (light)
 // ---------------------------------------------------------------------------
 
 @Composable
