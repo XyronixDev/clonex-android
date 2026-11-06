@@ -1,48 +1,67 @@
-# CloneX — Virtual Space / App Cloner (MVP)
+# CloneX — Virtual Space / App Cloner (v2.0)
 
 **App:** CloneX · **Package:** `com.clonex.space` · **Repo:** `clonex-android`
 
 Clone multiple apps, keep each clone in its own space, run them with
-separate logins — Parallel Space / Dual App style. This repository holds
-the **MVP scaffold**: premium UI + clone library + APK import. The real
-virtual engine (which actually runs a cloned app inside a virtual space)
-is the next step and is **not** bundled yet — see "Honest limits" below.
+separate logins — Parallel Space / Dual App style. v2.0 ships the **real
+virtual engine**: the MultiApp opensdk (HackApi) — a true sandbox
+container with native hooks, split-APK install, and a 32-bit assist
+package. Light-mode UI styled like the MultiApp screenshots.
 
 > **Delivery:** no zip is published. Push to GitHub → GitHub Actions
-> builds the release APK → download it from the Actions tab
-> (artifact `CloneX-release-apk`).
+> builds the release APK (including the engine AAR) → download it from
+> the Actions tab (artifact `CloneX-release-apk`).
 
 ## Roman Urdu — mukhtasar
 
-Ye MVP hai: UI premium hai, clone ki list save hoti hai, APK import
-hota hai, lekin abhi koi app virtual space ke andar **run nahi hoti** —
-tap karne par saaf bata diya jata hai ke engine abhi nahi hai. Banking
+v2.0 mein asli engine hai: app clone hoti hai aur virtual space ke andar
+**run bhi hoti hai** — tap karne par clone launch hoti hai. Split APK
+(WhatsApp, Facebook, Instagram) folder se install hoti hai. Banking
 apps aur REQUIRE_SECURE_ENV wali apps ismein kabhi nahi chalengi.
 100% guarantee koi virtual-space app nahi deti, Parallel Space bhi nahi.
-Asal engine agla step hai (VirtualApp fork + native libs).
 
-## What the MVP does (real)
+## What v2.0 does (real)
 
-- Premium dark Compose UI: header, search, 3-column clone grid.
+- Light-mode Compose UI like the MultiApp screenshots: title top-left,
+  3-dot menu, white feature card (Secret Zone / Storage Manager /
+  Device Info / Find Help), clone grid with real icons, blue + FAB.
+- **Already PRO** — every feature unlocked from the start: up to 10
+  clones per app, Secret Zone, Storage Manager, Google Suite. No upsell,
+  no gating, no VIP anything.
+- **Real virtual engine** (MultiApp opensdk, HackApi): clones actually
+  install into the virtual space and launch on tap.
 - **Add App** — pick any installed app, save it as Clone 1 / Clone 2…
-- **Import APK** — system file picker (SAF), APK is copied to app
-  storage, real package name + label are read with `PackageManager`.
+  (each clone = its own virtual user space).
+- **Import APK** — system file picker (SAF): a single APK file, or a
+  **folder of split APKs** (WhatsApp / Facebook / Instagram from Play).
+- **Import Apps screen** — HOT section (Instagram, YouTube, Telegram,
+  WhatsApp, Facebook), A-Z list with a right-side alphabet index.
+- **Secret Zone** — PIN-gated private clones, hidden from the home grid.
+- **Storage Manager** — per-clone Clear cache / Clear data through the
+  engine (deletePackageCache / deletePackageData).
+- **Device Info** — engine runtime properties + host device details.
+- **Install Google Suite** — the Play Store build bundled with the
+  engine (`com.waxmoon.ma.gp`) + host GMS / GSF / vending when present.
+- **Device Info** — engine runtime properties + host device details.
+- Long-press a clone: Launch / Secret Zone / Clear data / Clear cache /
+  Kill app / Remove.
 - Clone library in **Room** (survives restarts), settings in
-  **DataStore** (max clones per app, notifications on/off).
-- Long-press a clone to remove it.
+  **DataStore** (max clones, notifications, Secret Zone PIN).
 - Release build: R8 minify + shrinkResources, **arm64-only** (small size).
 
-## What it does NOT do yet (honest)
+## Honest limits
 
-- No virtual install, no virtual launch, no data isolation between
-  clones. `StubVirtualEngine.launchApp()` returns `NotImplemented` and
-  the UI shows that message — nothing is faked.
-- Needs the real engine: a maintained VirtualApp fork + C/C++ NDK native
-  libs for hooking / IO redirection. See
-  `app/src/main/java/com/clonex/space/engine/ENGINE_NOTES.md`.
+- The engine is frozen since 2023 (Android 14 max in its changelog) —
+  it may not work on newer Android versions. Verify on the phone.
 - Banking / payment / UPI apps and apps declaring
   `REQUIRE_SECURE_ENV` are out of scope on purpose — they detect virtual
   environments and refuse or ban. No bypass will ever be shipped.
+- 32-bit-only apps need the assist package (`com.clonex.space.assist`),
+  installed through the system installer when CloneX asks.
+- Play Store / GMS inside the sandbox is fragile; the bundled Play
+  Store build is a modded APK, not the stock Play Store.
+- No virtual-space app runs 100% of apps — social / messaging apps
+  (WhatsApp, Facebook, Instagram, Telegram) are the realistic target.
 
 ## Stack (locked)
 
@@ -50,21 +69,26 @@ Asal engine agla step hai (VirtualApp fork + native libs).
 |---|---|
 | Kotlin | 2.4.21 (latest stable, 8 Oct 2026) |
 | Jetpack Compose BOM | 2026.08.00 (Compose 1.12) |
-| AGP | 9.1.2 (needs Gradle 9.3.1+) |
-| Gradle | 9.8.2 (locked spec said 9.7 — that version was never released; 9.8.2 is the verified current stable per services.gradle.org, and it satisfies AGP 9.1's Gradle 9.3.1 minimum) |
-| JDK | 21 |
-| compileSdk / targetSdk / minSdk | 37 / 36 / 26 |
-| NDK | 27.2.12479018 (declared only, no `.so` bundled yet) |
+| AGP | 9.5.0 (verified via Google Maven metadata 2026-11-06; AGP 9.1.2 does not exist) |
+| Gradle | 9.8.2 (locked spec said 9.7 — that version was never released) |
+| JDK | 21 (CloneX build); 11 (opensdk AAR build in CI) |
+| compileSdk / targetSdk / minSdk | 37 / **26** / 26 (targetSdk 26 is an engine requirement — sideload-only) |
+| Engine | MultiApp opensdk (HackApi), AGPL-3.0 — AAR built in CI from pinned commit `3de55af6` |
 | Room / DataStore / KSP | 2.7.1 / 1.1.7 / 2.3.10 |
 
 ## Build via GitHub Actions (the delivery route)
 
-1. Create the repo **`clonex-android`** on GitHub (private is fine).
-   The GitHub App cannot create repos (403) — create it in the browser,
-   then the connector pushes this folder.
-2. Push `main`. The workflow `.github/workflows/build.yml` runs:
-   JDK 21 → Gradle 9.7 → `assembleRelease` → `apksigner verify`.
-3. Download the APK from the run's artifacts (`CloneX-release-apk`).
+1. Push `main`. The workflow `.github/workflows/build.yml` runs:
+   JDK 11 → clone WaxMoon/MultiApp at the pinned commit, patch the
+   master/assist package names, build `:opensdk:assembleRelease` (AGP
+   7.0.2) + `:assist:assembleRelease` → copy the AAR to `app/libs/` and
+   the assist APK to `app/src/main/assets/` → JDK 21 → Gradle 9.8.2 →
+   `assembleRelease` → `apksigner verify`.
+2. Download the APK from the run's artifacts (`CloneX-release-apk`).
+
+> The workflow file itself cannot be pushed through the GitHub API
+> (403) — it is uploaded through the browser UI. Code files are pushed
+> normally; the workflow file on disk must match what is on GitHub.
 
 Local build (needs Android SDK with platform 37.0 from the preview
 channel + JDK 21):
@@ -131,22 +155,42 @@ Without the secrets the workflow still builds and uploads an
 ```
 settings.gradle.kts / build.gradle.kts / gradle/libs.versions.toml
 app/
-  build.gradle.kts            # SDKs, R8, arm64 split, signing config
-  src/main/AndroidManifest.xml
+  build.gradle.kts            # SDKs, R8, arm64 split, signing config, opensdk AAR
+  src/main/AndroidManifest.xml  # .CloneXApplication + FileProvider (assist APK)
+  src/main/res/xml/file_paths.xml
   src/main/java/com/clonex/space/
-    MainActivity.kt           # single activity, Compose UI
-    ui/Theme.kt               # dark Material 3 theme
-    data/                     # Room: CloneEntry, CloneDao, CloneDatabase
-                              # DataStore: SettingsStore
-    engine/                   # VirtualEngine, StubVirtualEngine, ENGINE_NOTES.md
-.github/workflows/build.yml  # Actions: build + verify + upload APK
+    CloneXApplication.kt      # extends HackApplication (engine init)
+    MainActivity.kt           # single activity, light Compose UI (home /
+                              # Import Apps / Secret Zone), real icons
+    ui/Theme.kt               # light Material 3 theme
+    data/                     # Room: CloneEntry (v2: isPrivate), CloneDao,
+                              # CloneDatabase (v2 + migration); DataStore:
+                              # SettingsStore (max clones, Secret Zone PIN)
+    engine/                   # VirtualEngine, RealVirtualEngine (HackApi),
+                              # StubVirtualEngine (kept, unused), ENGINE_NOTES.md
+.github/workflows/build.yml  # Actions: opensdk AAR + assist APK, then CloneX APK
 ```
 
-## Next step (real engine)
+## Open-source attribution (AGPL-3.0)
 
-1. Pick a maintained VirtualApp fork that tracks Android 14/15/16,
-   check its licence (the original is business-licensed for store use).
-2. Add its native libs (arm64-v8a), wire `VirtualEngine` to it, keep
-   the stub as fallback.
-3. Phone-test with WhatsApp / Facebook / Instagram clones first;
-   banking apps stay out of scope.
+CloneX v2.0 uses the **MultiApp opensdk** virtual engine by WaxMoon:
+
+- MultiApp: https://github.com/WaxMoon/MultiApp (pinned commit
+  `3de55af64ec925de390cbf30bb82f279a51945e0`)
+- opensdk: https://github.com/WaxMoon/opensdk (submodule `eaab164`)
+- Licence: **GNU Affero General Public License v3.0 (AGPL-3.0)**
+
+The opensdk is used unmodified except for the host/assist package
+names (`com.clonex.space` / `com.clonex.space.assist`) and CloneX
+branding. No MultiApp artwork is copied (feature icons are generic
+shapes/emoji). CloneX source code is published at
+https://github.com/XyronixDev/clonex-android under the same licence.
+
+## Next step (phone testing)
+
+1. Install v2.0 over v1.1.0 (same keystore) and check the engine starts
+   (no crash on launch; logcat: `CloneXApplication` / `HackApplication`).
+2. Clone WhatsApp (split APK) → launch → log in with a second number.
+3. Clone Facebook, Instagram, Telegram, Chrome (WebView).
+4. One 32-bit-only app → assist package prompt → install → launch.
+5. One banking app → expect a clean refusal, not a host crash.
