@@ -1,61 +1,71 @@
-# CloneX Engine — v2.0 notes (MultiApp opensdk)
+# CloneX Engine — v3.0 notes (NewBlackbox)
 
-## What v2.0 does (real)
+## Why v3.0 replaced v2.0
 
-- Real virtual engine: **MultiApp opensdk (HackApi)** — a true sandbox
-  container, not a Java dynamic proxy: native seccomp/bpf svc hooks,
-  stub processes (`:agent.p0`..`:agent.pN`, `:core` service process),
-  virtual PackageManager + hooked Binder/system services.
+v2.0 used the MultiApp opensdk (HackApi) engine, frozen since 2023. On
+the user's phone (OnePlus DN2101, Android 13) it installed clones fine
+but its server REJECTED every launch (engine code 102), and sometimes
+reported success while the clone's `:agent` process died at once.
+v3.0 switches to NewBlackbox, which is actively maintained (Android
+13–16), has a single boolean launch, and a 3-layer hidden-API bypass.
+
+## What v3.0 does (real)
+
+- Real virtual engine: **NewBlackbox (BlackBoxCore)** — a true sandbox
+  container: native hooks, stub processes (`:p0`..`:pN`, `:black`
+  server process), virtual PackageManager + hooked Binder/system
+  services. No assist package, no moon.jar.
 - `RealVirtualEngine` (engine/RealVirtualEngine.kt) implements the
-  `VirtualEngine` interface with HackApi:
-  - `installPackageFromHost(pkg, userId, false)` — clone an installed app
-  - `installApkFiles(pathOrDir, userId, false)` — one APK, or a directory
-    of split APKs (WhatsApp / Facebook / Instagram from Play)
-  - `startActivity(getLaunchIntentForPackage(pkg, userId), userId)` —
-    launch; `startPackage` (deprecated) is the fallback
-  - `uninstallPackage`, `deletePackageData`, `deletePackageCache`,
-    `killApplication`, `getInstalledPackages`, `getAvailableUser`
-  - `getPackageSetting` "request_assistant" — 32-bit clones need the
-    assist package (`com.clonex.space.assist`)
-- `CloneXApplication` extends `HackApplication`: the engine extracts
-  `moon.jar` from the AAR assets on first run and loads it with a
-  DexClassLoader. Init runs in EVERY process of the APK.
-- Google Suite: the Play Store build bundled with the engine AAR
-  (`assets/com.waxmoon.ma.gp.apk`, package `com.waxmoon.ma.gp`) + the
-  host's GMS / GSF / vending packages when present.
-- targetSdk **26** (the engine itself targets 26) — sideload-only,
+  `VirtualEngine` interface over BlackBoxCore:
+  - `installPackageAsUser(pkg, userId)` — clone an installed app
+    (split APKs handled inside the engine by the MaxCloner patch)
+  - `installPackageAsUser(File, userId)` — one APK file
+  - `installApkFiles` — a directory of split APKs: base installed
+    first, then the splits are copied into the engine's splits dir
+  - `launchApk(pkg, userId): boolean` — one call, one boolean; no
+    int codes, no 3-shot sequence
+  - `uninstallPackageAsUser`, `clearPackage` (data), `stopPackage`
+    (kill), `getInstalledApplications`, `isInstalled`
+  - Google Suite: `installGms(userId)` / `uninstallGms(userId)` /
+    `isInstallGms(userId)` — GMS-only, no Play Store app (it crashes
+    inside NewBlackbox: SecurityException on LocaleManager)
+  - Clear cache: the clone's data/cache dir is deleted directly
+    (NewBlackbox has no cache-only API)
+- `CloneXApplication` is a plain `Application`:
+  `doAttachBaseContext(base, ClientConfiguration)` + `doCreate()`.
+  Init runs in EVERY process of the APK.
+- Split APKs: the MaxCloner split patch is applied to the Bcore source
+  in CI (tools/patch-bcore-split.py) — the engine copies every split
+  and extracts native libs from each split. See
+  tools/bcore-split-patch/README.md.
+- targetSdk **28** (the engine itself targets 28) — sideload-only,
   never Google Play.
 
 ## How the engine is built
 
-The opensdk AAR is built in CI from the pinned upstream commit
-(WaxMoon/MultiApp `3de55af64ec925de390cbf30bb82f279a51945e0`, opensdk
-submodule `eaab164`), with the root `build.gradle` ext block patched so
-`MASTER_PACKAGE=com.clonex.space` and
-`ASSIST_PACKAGE=com.clonex.space.assist` are baked into the AAR's
-BuildConfig. The assist APK is built from the same checkout
-(`:assist:assembleRelease`) and copied into `app/src/main/assets/`.
+The Bcore AAR is built in CI from the pinned upstream commit
+(ALEX5402/NewBlackbox `89b59836c66f173756a4ae258cf379a957649820`),
+patched with the split-APK script, then `:Bcore:assembleRelease`
+with the repo's own Gradle wrapper (8.14.5, JDK 21, NDK
+29.0.13846066, compileSdk 35). The AAR is copied to `app/libs/`.
 See `.github/workflows/build.yml`.
 
 ## Licence
 
-The opensdk is **AGPL-3.0** (WaxMoon). CloneX source stays public under
-AGPL-3.0 with attribution — see README.md "Open-source attribution".
-The opensdk is used unmodified except for the host/assist package names
-and CloneX branding. No MultiApp artwork is copied.
+NewBlackbox is **Apache-2.0** (ALEX5402). The MaxCloner split patch
+is also Apache-2.0. CloneX source stays public with attribution —
+see README.md "Open-source attribution". No MultiApp artwork is
+copied, and the opensdk (AGPL-3.0) is no longer used at all.
 
 ## Known limits (honest, unchanged)
 
-- The engine is frozen since 2023 (Android 14 max in its changelog).
-  It may not work on newer Android versions — verify on the phone.
 - Banking / payment / UPI apps and apps declaring `REQUIRE_SECURE_ENV`
-  detect virtual environments and refuse or ban. Parallel Space itself
-  dropped support for those apps in 4.0.9544. CloneX will never ship a
-  bypass for that detection.
+  detect virtual environments and refuse or ban. CloneX will never
+  ship a bypass for that detection.
 - Games with anti-cheat: cloning them risks an account ban.
-- Play Store / GMS inside the sandbox is fragile (the engine's own
-  Play Store build is a modded APK, not the stock Play Store).
-- 32-bit-only clones need the assist package installed on the phone.
+- Play Store / GMS inside the sandbox is fragile (the Play Store app
+  itself crashes inside NewBlackbox; GMS-only Suite is the working
+  option).
 - No root, no system modification, no silent installs.
 
 ## No 100% guarantee
