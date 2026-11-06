@@ -1,57 +1,59 @@
 package com.clonex.space.engine
 
 import android.content.Context
-import com.clonex.space.CloneXApplication
-import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import com.clonex.space.CloneXApplication
 import com.clonex.space.data.CloneDao
 import com.clonex.space.data.CloneEntry
-import com.hack.opensdk.CmdConstants
-import com.hack.opensdk.HackApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import top.niunaijun.blackbox.BlackBoxCore
+import top.niunaijun.blackbox.entity.pm.InstallResult
 import java.io.File
 
 /**
- * CloneX v2.0 real virtual engine — MultiApp opensdk (HackApi).
+ * CloneX v3.0 real virtual engine — NewBlackbox (BlackBoxCore).
  *
- * Verified against the opensdk sources (WaxMoon/MultiApp, pinned commit
- * 3de55af64ec925de390cbf30bb82f279a51945e0, opensdk submodule eaab164):
+ * Verified against the NewBlackbox sources (ALEX5402/NewBlackbox, pinned
+ * commit 89b59836c66f173756a4ae258cf379a957649820, HEAD 2026-07-19):
  *
- *  - HackApi.installPackageFromHost(String, int, boolean): int
- *  - HackApi.installApkFiles(String, int, boolean): int
- *  - HackApi.uninstallPackage(String, int): int
- *  - HackApi.deletePackageData(String, int): int
- *  - HackApi.deletePackageCache(String, int): int
- *  - HackApi.startActivity(Intent, int): int
- *  - HackApi.startPackage(String, int): boolean (engine's own high-level
- *    launch — v2.0.3 tries it FIRST after the intent path reported
- *    success with nothing opening twice)
- *  - HackApi.getLaunchIntentForPackage(String, int): Intent?
- *  - HackApi.killApplication(int, String, String): void
- *  - HackApi.getInstalledPackages(int, int): List<String>
- *  - HackApi.getAvailableUserSpace(): int[]
- *  - HackApi.getAvailableUser(String): int
- *  - HackApi.getPackageSetting(String, int, int): Bundle
- *  - HackApi.getRuntimeProperties(): Map<String, Object>
+ *  - BlackBoxCore.get().installPackageAsUser(String, int): InstallResult
+ *      (clone a host-installed app by package name)
+ *  - BlackBoxCore.get().installPackageAsUser(File, int): InstallResult
+ *      (install one APK file)
+ *  - BlackBoxCore.get().launchApk(String, int): boolean
+ *      (true = launched; no int codes — the opensdk 102 is gone)
+ *  - BlackBoxCore.get().uninstallPackageAsUser(String, int): void
+ *  - BlackBoxCore.get().isInstalled(String, int): boolean
+ *  - BlackBoxCore.get().getInstalledApplications(int, int): List<ApplicationInfo>
+ *  - BlackBoxCore.get().clearPackage(String, int): void  (wipe data)
+ *  - BlackBoxCore.get().stopPackage(String, int): void   (kill)
+ *  - BlackBoxCore.get().getUsers(): List<BUserInfo>
+ *  - BlackBoxCore.get().isInstallGms(int): boolean
+ *  - BlackBoxCore.get().installGms(int): InstallResult
+ *  - BlackBoxCore.get().uninstallGms(int): boolean
+ *  - BlackBoxCore.get().areServicesAvailable(): boolean
+ *  - InstallResult: public boolean success, String packageName, String msg
  *
- * Return codes: INSTALL_SUCCEEDED = 1 is documented in HackApi's javadoc;
- * INSTALL_FAILED_ALREADY_EXISTS = -1, INSTALL_FAILED_INVALID_APK = -2 and
- * INSTALL_FAILED_INVALID_URI = -3 are the MultiApp demo app's own constants
- * (AppListActivity.kt) — the engine jar's own codes were not visible from
- * the sources, so anything other than 1 is reported with its raw code.
- * START_SUCCESS = 0; startActivity also returns 1/2/3 for
- * "returned to caller / task to front / delivered to top", which are
- * success variants, so any return >= 0 counts as launched.
+ * Split APKs (Instagram, Facebook, WhatsApp are App Bundles): upstream
+ * NewBlackbox clones only base.apk. The MaxCloner split patch is applied
+ * to the Bcore source in CI (tools/patch-bcore-split.py) — the engine
+ * then copies every split and extracts native libs from each split when
+ * installing a host-installed app, so installFromHost just works.
+ * installApkFiles (a directory of APKs) installs the base file, then
+ * copies the remaining splits into the engine's splits dir for that
+ * package (see [splitApkDir]).
  *
  * userId = the clone's userSpace = cloneIndex (0, 1, 2, ...). Each clone of
  * the same package runs under its own userId inside the virtual space.
+ * NewBlackbox auto-creates a user on install, so no explicit createUser
+ * call is needed.
  *
- * All HackApi calls are binder IPC into the engine and can block, so every
- * method runs on Dispatchers.IO and never throws out of the engine — a
- * failure is always an EngineResult.Failed.
+ * All BlackBoxCore calls are binder IPC into the engine and can block, so
+ * every method runs on Dispatchers.IO and never throws out of the engine
+ * — a failure is always an EngineResult.Failed.
  */
 class RealVirtualEngine(
     private val context: Context,
@@ -61,25 +63,16 @@ class RealVirtualEngine(
     companion object {
         private const val TAG = "RealVirtualEngine"
 
-        const val INSTALL_SUCCEEDED = 1
-        const val INSTALL_FAILED_ALREADY_EXISTS = -1
-        const val INSTALL_FAILED_INVALID_APK = -2
-        const val INSTALL_FAILED_INVALID_URI = -3
-        const val DELETE_SUCCEEDED = 1
-        const val START_SUCCESS = 0
-
         /**
          * Packages that belong to the engine itself — never shown as
-         * clone cards (v2.0.1: the bundled Play Store must not appear
-         * as a clone the user never added).
+         * clone cards. Google Services are managed by installGms, not
+         * by the user, so they must not appear as clones either.
          */
         val INTERNAL_PACKAGES = setOf(
-            "com.waxmoon.ma.gp",        // bundled Play Store (Google Suite)
-            "com.clonex.space.assist", // 32-bit assist package
             "com.clonex.space",         // CloneX itself
-            "com.google.android.gms",   // Google Services (Google Suite support)
+            "com.google.android.gms",   // Google Services (Google Suite)
             "com.google.android.gsf",   // Google Services Framework
-            "com.android.vending"       // Play Store (host copy)
+            "com.android.vending"       // Play Store (GMS registry)
         )
     }
 
@@ -97,12 +90,12 @@ class RealVirtualEngine(
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val parsed = parseApk(apkPath)
-                    ?: return@withContext EngineResult.Failed(
-                        "Could not read this APK file."
-                    )
+                    ?: return@withContext EngineResult.Failed("Could not read this APK file.")
                 val (packageName, label) = parsed
-                val ret = HackApi.installApkFiles(apkPath, userId, false)
-                val result = installResult(ret, label, userId)
+                val result = installResult(
+                    BlackBoxCore.get().installPackageAsUser(File(apkPath), userId),
+                    label, userId
+                )
                 if (result is EngineResult.Ok) {
                     insertEntry(packageName, label, userId, apkPath)
                 }
@@ -118,46 +111,14 @@ class RealVirtualEngine(
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val label = hostLabel(packageName)
-                // v2.0.5 — split APKs (Instagram etc.): installPackageFromHost
-                // evidently copies only the base APK, and the clone then
-                // fails to launch (engine code 102 on the user's phone,
-                // Android 13 / SDK 33 — inside the engine's supported
-                // range, so the launch failure is the install, not the
-                // Android version). If the host app has split APKs, copy
-                // base + all splits into a temp dir and install the whole
-                // set with installApkFiles (the engine's split-APK path).
-                // A copy/IO failure falls back to installPackageFromHost.
-                val splits = splitApkFiles(packageName)
-                if (splits != null) {
-                    try {
-                        val dir = File(context.filesDir, "split-install/$packageName")
-                            .apply { mkdirs() }
-                        try {
-                            splits.forEach { src ->
-                                File(src).copyTo(
-                                    File(dir, File(src).name),
-                                    overwrite = true
-                                )
-                            }
-                            val ret = HackApi.installApkFiles(dir.absolutePath, userId, false)
-                            val result = installResult(ret, label, userId)
-                            if (result is EngineResult.Ok) {
-                                insertEntry(packageName, label, userId, null)
-                            }
-                            return@withContext result
-                        } finally {
-                            dir.deleteRecursively()
-                        }
-                    } catch (e: Exception) {
-                        Log.w(
-                            TAG,
-                            "split install failed, falling back to installPackageFromHost",
-                            e
-                        )
-                    }
-                }
-                val ret = HackApi.installPackageFromHost(packageName, userId, false)
-                val result = installResult(ret, label, userId)
+                // The MaxCloner split patch (applied to Bcore in CI) makes
+                // the engine copy base + all splits and extract native
+                // libs from each split, so a host-installed App Bundle
+                // installs whole with this one call.
+                val result = installResult(
+                    BlackBoxCore.get().installPackageAsUser(packageName, userId),
+                    label, userId
+                )
                 if (result is EngineResult.Ok) {
                     insertEntry(packageName, label, userId, null)
                 }
@@ -168,26 +129,11 @@ class RealVirtualEngine(
             }
         }
 
-    /** Base APK + split APK paths for a host-installed app, or null when
-     *  the app is a single APK (or its splits cannot be read). */
-    private fun splitApkFiles(packageName: String): List<String>? {
-        return try {
-            val info = context.packageManager.getApplicationInfo(packageName, 0)
-            val splits = info.splitSourceDirs
-            if (splits.isNullOrEmpty()) null
-            else listOf(info.sourceDir) + splits.toList()
-        } catch (e: Exception) {
-            null
-        }
-    }
-
     override suspend fun installApkFiles(apkPathOrDir: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val file = File(apkPathOrDir)
-                // For a split-APK directory every APK shares one package
-                // name — parse the first readable APK for the library entry.
                 val parsed = when {
                     file.isFile -> parseApk(apkPathOrDir)
                     file.isDirectory -> file.listFiles()
@@ -195,24 +141,39 @@ class RealVirtualEngine(
                         ?.sortedBy { it.name }
                         ?.firstNotNullOfOrNull { parseApk(it.absolutePath) }
                     else -> null
-                }
-                val ret = HackApi.installApkFiles(apkPathOrDir, userId, false)
-                if (parsed == null) {
-                    return@withContext if (ret == INSTALL_SUCCEEDED) {
-                        EngineResult.Ok(
-                            "Installed in the virtual space (Clone ${userId + 1}). " +
-                                "The library entry will appear after the next sync."
-                        )
-                    } else {
-                        installResult(ret, "App", userId)
-                    }
-                }
+                } ?: return@withContext EngineResult.Failed("Could not read this APK file.")
                 val (packageName, label) = parsed
-                val result = installResult(ret, label, userId)
-                if (result is EngineResult.Ok) {
-                    insertEntry(packageName, label, userId, null)
+                // Install the base APK first (single file), then copy any
+                // sibling splits into the engine's splits dir for this
+                // package — the engine re-derives split paths by listing
+                // that dir, so they are picked up at launch.
+                val baseApk = when {
+                    file.isFile -> file
+                    else -> file.listFiles()
+                        ?.filter { it.name.endsWith(".apk", ignoreCase = true) }
+                        ?.sortedBy { it.name }
+                        ?.firstOrNull()
+                        ?: return@withContext EngineResult.Failed("No APK files found in the picked folder.")
                 }
-                result
+                val baseResult = installResult(
+                    BlackBoxCore.get().installPackageAsUser(baseApk, userId),
+                    label, userId
+                )
+                if (baseResult !is EngineResult.Ok) return@withContext baseResult
+                if (file.isDirectory) {
+                    val splitDir = splitApkDir(packageName).apply { mkdirs() }
+                    file.listFiles()
+                        ?.filter { it.name.endsWith(".apk", ignoreCase = true) && it != baseApk }
+                        ?.forEach { split ->
+                            try {
+                                split.copyTo(File(splitDir, split.name), overwrite = true)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "copying split ${split.name} failed", e)
+                            }
+                        }
+                }
+                insertEntry(packageName, label, userId, null)
+                baseResult
             } catch (e: Exception) {
                 Log.w(TAG, "installApkFiles failed", e)
                 EngineResult.Failed("Install failed: ${e.message}")
@@ -225,60 +186,15 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                // v2.0.4 — three shots at the launch, because the user's
-                // phone returns a real engine error (code 102) instead of
-                // opening the clone. Shot 1: the engine's own startPackage.
-                // Shot 2: the MultiApp demo's intent sequence (host intent
-                // + RESET_TASK_IF_NEEDED, ret == START_SUCCESS only).
-                // Shot 3 (only after a failure): kill any stale agent
-                // process for this package, then retry with the ENGINE's
-                // own launch intent — the virtual component, which skips
-                // the host-intent rewrite that may be failing with 102.
-                @Suppress("DEPRECATION")
-                if (HackApi.startPackage(packageName, userId)) {
-                    return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
+                // One call, one boolean — no int codes, no 3-shot
+                // sequence. The opensdk's undocumented 102 cannot occur
+                // here; a false means "no launchable activity" or the
+                // engine refused the launch.
+                if (BlackBoxCore.get().launchApk(packageName, userId)) {
+                    EngineResult.Ok("Launching ${hostLabel(packageName)}…")
+                } else {
+                    EngineResult.Failed("Clone could not start.")
                 }
-                val hostIntent = try {
-                    context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                        addFlags(
-                            Intent.FLAG_ACTIVITY_NEW_TASK or
-                                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
-                        )
-                    }
-                } catch (e: Exception) {
-                    null
-                }
-                if (hostIntent != null) {
-                    val ret = HackApi.startActivity(hostIntent, userId)
-                    if (ret == START_SUCCESS) {
-                        return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
-                    }
-                    Log.w(TAG, "launchApp host-intent failed code=$ret pkg=$packageName")
-                }
-                // Shot 3: clear a possibly stuck agent process, then try
-                // the engine's own intent for this package.
-                try {
-                    HackApi.killApplication(userId, packageName, "clonex-launch-retry")
-                } catch (e: Exception) {
-                    Log.w(TAG, "launchApp killApplication failed", e)
-                }
-                val engineIntent = try {
-                    HackApi.getLaunchIntentForPackage(packageName, userId)?.apply {
-                        addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
-                    }
-                } catch (e: Exception) {
-                    null
-                }
-                if (engineIntent != null) {
-                    val ret = HackApi.startActivity(engineIntent, userId)
-                    if (ret == START_SUCCESS) {
-                        return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
-                    }
-                    return@withContext EngineResult.Failed("Launch failed (engine code $ret).")
-                }
-                EngineResult.Failed(
-                    "No launchable activity found for $packageName in this space."
-                )
             } catch (e: Exception) {
                 Log.w(TAG, "launchApp failed", e)
                 EngineResult.Failed("Launch failed: ${e.message}")
@@ -289,11 +205,11 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                val ret = HackApi.uninstallPackage(packageName, userId)
-                if (ret == DELETE_SUCCEEDED) {
+                BlackBoxCore.get().uninstallPackageAsUser(packageName, userId)
+                if (!BlackBoxCore.get().isInstalled(packageName, userId)) {
                     EngineResult.Ok("Removed from the virtual space.")
                 } else {
-                    EngineResult.Failed("Uninstall failed (engine code $ret).")
+                    EngineResult.Failed("Uninstall failed.")
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "uninstallPackage failed", e)
@@ -307,12 +223,8 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                val ret = HackApi.deletePackageData(packageName, userId)
-                if (ret == DELETE_SUCCEEDED) {
-                    EngineResult.Ok("Clone data cleared.")
-                } else {
-                    EngineResult.Failed("Clear data failed (engine code $ret).")
-                }
+                BlackBoxCore.get().clearPackage(packageName, userId)
+                EngineResult.Ok("Clone data cleared.")
             } catch (e: Exception) {
                 Log.w(TAG, "clearCloneData failed", e)
                 EngineResult.Failed("Clear data failed: ${e.message}")
@@ -323,12 +235,12 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                val ret = HackApi.deletePackageCache(packageName, userId)
-                if (ret == DELETE_SUCCEEDED) {
-                    EngineResult.Ok("Clone cache cleared.")
-                } else {
-                    EngineResult.Failed("Clear cache failed (engine code $ret).")
-                }
+                // NewBlackbox has no cache-only API; delete the clone's
+                // data/cache dir contents directly (same path the engine
+                // uses: virtualRoot/data/user/<userId>/<pkg>/cache).
+                val cacheDir = dataCacheDir(packageName, userId)
+                cacheDir.listFiles()?.forEach { it.deleteRecursively() }
+                EngineResult.Ok("Clone cache cleared.")
             } catch (e: Exception) {
                 Log.w(TAG, "clearCloneCache failed", e)
                 EngineResult.Failed("Clear cache failed: ${e.message}")
@@ -339,7 +251,7 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                HackApi.killApplication(userId, packageName, "CloneX user request")
+                BlackBoxCore.get().stopPackage(packageName, userId)
                 EngineResult.Ok("Clone stopped.")
             } catch (e: Exception) {
                 Log.w(TAG, "killClone failed", e)
@@ -353,33 +265,17 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext 0 }
-                HackApi.getAvailableUser(packageName)
+                // First userId (0..9) where this package is not installed.
+                // NewBlackbox auto-creates the user on install.
+                for (userId in 0..9) {
+                    if (!BlackBoxCore.get().isInstalled(packageName, userId)) {
+                        return@withContext userId
+                    }
+                }
+                10
             } catch (e: Exception) {
-                Log.w(TAG, "getAvailableUser failed, using 0", e)
+                Log.w(TAG, "availableUser failed, using 0", e)
                 0
-            }
-        }
-
-    override suspend fun needsAssist(packageName: String, userId: Int): Boolean =
-        withContext(Dispatchers.IO) {
-            try {
-                engineDown()?.let { return@withContext false }
-                val settings = HackApi.getPackageSetting(packageName, userId, 0)
-                settings?.getBoolean(CmdConstants.PKG_SET_REQUEST_ASSISTANT, false) ?: false
-            } catch (e: Exception) {
-                Log.w(TAG, "getPackageSetting failed", e)
-                false
-            }
-        }
-
-    override suspend fun runtimeProperties(): Map<String, Any?> =
-        withContext(Dispatchers.IO) {
-            try {
-                engineDown()?.let { return@withContext emptyMap() }
-                HackApi.getRuntimeProperties()?.mapValues { it.value } ?: emptyMap()
-            } catch (e: Exception) {
-                Log.w(TAG, "getRuntimeProperties failed", e)
-                emptyMap()
             }
         }
 
@@ -387,22 +283,15 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext emptyList() }
-                val spaces = try {
-                    HackApi.getAvailableUserSpace()?.toList() ?: emptyList()
-                } catch (e: Exception) {
-                    emptyList()
-                }
-                // getAvailableUserSpace lists the spaces the engine knows;
-                // scan 0..9 as well so a fresh engine still reports clones.
-                val userIds = (spaces + (0..9)).distinct()
                 val entries = mutableListOf<CloneEntry>()
-                for (userId in userIds) {
-                    val pkgs = try {
-                        HackApi.getInstalledPackages(0, userId)
+                for (userId in 0..9) {
+                    val apps = try {
+                        BlackBoxCore.get().getInstalledApplications(0, userId)
                     } catch (e: Exception) {
                         null
                     } ?: continue
-                    for (pkg in pkgs) {
+                    for (app in apps) {
+                        val pkg = app.packageName
                         if (pkg in INTERNAL_PACKAGES) continue
                         entries += CloneEntry(
                             packageName = pkg,
@@ -419,23 +308,57 @@ class RealVirtualEngine(
             }
         }
 
+    // --- Google Mobile Services ----------------------------------------------
+
+    override suspend fun isGmsInstalled(userId: Int): Boolean =
+        withContext(Dispatchers.IO) {
+            try {
+                engineDown()?.let { return@withContext false }
+                BlackBoxCore.get().isInstallGms(userId)
+            } catch (e: Exception) {
+                Log.w(TAG, "isGmsInstalled failed", e)
+                false
+            }
+        }
+
+    override suspend fun installGms(userId: Int): EngineResult =
+        withContext(Dispatchers.IO) {
+            try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
+                val result = BlackBoxCore.get().installGms(userId)
+                if (result.success) {
+                    EngineResult.Ok("Google services installed.")
+                } else {
+                    EngineResult.Failed(result.msg ?: "Google services install failed.")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "installGms failed", e)
+                EngineResult.Failed("Google services install failed: ${e.message}")
+            }
+        }
+
+    override suspend fun uninstallGms(userId: Int): EngineResult =
+        withContext(Dispatchers.IO) {
+            try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
+                if (BlackBoxCore.get().uninstallGms(userId)) {
+                    EngineResult.Ok("Google services removed.")
+                } else {
+                    EngineResult.Failed("Could not remove Google services.")
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "uninstallGms failed", e)
+                EngineResult.Failed("Google services remove failed: ${e.message}")
+            }
+        }
+
     // --- helpers ------------------------------------------------------------
 
-    private fun installResult(ret: Int, label: String, userId: Int): EngineResult =
-        when (ret) {
-            INSTALL_SUCCEEDED -> EngineResult.Ok(
-                "$label installed as Clone ${userId + 1}."
-            )
-            INSTALL_FAILED_ALREADY_EXISTS -> EngineResult.Failed(
-                "$label is already installed in this space."
-            )
-            INSTALL_FAILED_INVALID_APK -> EngineResult.Failed(
-                "Invalid APK — the file could not be installed."
-            )
-            INSTALL_FAILED_INVALID_URI -> EngineResult.Failed(
-                "Invalid install path."
-            )
-            else -> EngineResult.Failed("Install failed (engine code $ret).")
+    private fun installResult(result: InstallResult, label: String, userId: Int): EngineResult =
+        if (result.success) {
+            EngineResult.Ok("$label installed as Clone ${userId + 1}.")
+        } else {
+            EngineResult.Failed(result.msg ?: "Install failed.")
         }
 
     private suspend fun insertEntry(
@@ -444,10 +367,7 @@ class RealVirtualEngine(
         userId: Int,
         apkPath: String?
     ) {
-        // v2.0.3: engine support packages are NEVER library entries.
-        // The listClones() filter (v2.0.2) only covered the sync path —
-        // installFromHost/installApkFiles inserted gms/gsf/vending
-        // straight into Room, so the Google cards stayed on home.
+        // Engine support packages are NEVER library entries.
         if (packageName in INTERNAL_PACKAGES) return
         dao.insert(
             CloneEntry(
@@ -458,6 +378,25 @@ class RealVirtualEngine(
                 apkPath = apkPath
             )
         )
+    }
+
+    /**
+     * The engine's splits dir for a package, computed from the same
+     * formula BEnvironment uses (virtualRoot = host data dir +
+     * "/blackbox"; splits live at virtualRoot/data/app/<pkg>/splits).
+     * Computed here instead of calling BEnvironment directly so the
+     * build does not depend on a Bcore internal class surviving the
+     * AAR's minification.
+     */
+    private fun splitApkDir(packageName: String): File {
+        val dataDir = context.cacheDir.parentFile ?: context.filesDir
+        return File(dataDir, "blackbox/data/app/$packageName/splits")
+    }
+
+    /** The clone's data/cache dir (same formula as BEnvironment). */
+    private fun dataCacheDir(packageName: String, userId: Int): File {
+        val dataDir = context.cacheDir.parentFile ?: context.filesDir
+        return File(dataDir, "blackbox/data/user/$userId/$packageName/cache")
     }
 
     /** Label of an app installed on the phone (host), or the package name. */
