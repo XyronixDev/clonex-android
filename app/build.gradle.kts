@@ -41,21 +41,20 @@ android {
     namespace = "com.clonex.space"
     compileSdk = 37
 
-    // v2.0: the MultiApp opensdk engine ships its native libs (.so) in the
-    // AAR. The demo app uses legacy packaging for them; keep the same here
-    // so the engine can find its libs the way it expects.
+    // v3.0: the NewBlackbox engine ships its native lib (libblackbox.so)
+    // in the Bcore AAR. Bcore uses legacy packaging for it; keep the same
+    // here so the engine can find its lib the way it expects.
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.clonex.space"
         minSdk = 26
-        // v2.0: targetSdk 26 is an ENGINE requirement — the MultiApp
-        // opensdk itself targets 26, and the engine's hidden-API hooks
-        // break on higher targets. Consequence: sideload-only, never
-        // Google Play. See ENGINE_RESEARCH.md.
-        targetSdk = 26
-        versionCode = 13
-        versionName = "2.0.10"
+        // v3.0: targetSdk 28 is an ENGINE requirement — NewBlackbox
+        // itself targets 28, and its hidden-API hooks rely on it.
+        // Consequence: sideload-only, never Google Play.
+        targetSdk = 28
+        versionCode = 14
+        versionName = "3.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -102,7 +101,7 @@ android {
     }
 
     // Run #31 failed on lintVitalRelease: ExpiredTargetSdkVersion —
-    // Google Play requires target API 35+, but targetSdk 26 is an
+    // Google Play requires target API 35+, but targetSdk 28 is an
     // ENGINE requirement (see defaultConfig above) and CloneX is
     // sideload-only, never Play. Lint must not fail the release build
     // for this deliberate choice; other fatal lint issues still report.
@@ -133,9 +132,9 @@ android {
 
     packaging {
         jniLibs {
-            // The MultiApp opensdk demo uses legacy .so packaging; the
-            // engine extracts its libs from moon.jar itself, and legacy
-            // packaging keeps the AAR's libl.so / libpl.so loadable.
+            // NewBlackbox's Bcore AAR uses legacy .so packaging for
+            // libblackbox.so; keep the same so the engine's native lib
+            // stays loadable.
             useLegacyPackaging = true
         }
     }
@@ -166,9 +165,9 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
 
-    // v2.0: MultiApp opensdk virtual engine (WaxMoon, AGPL-3.0). The AAR is
-    // built in CI from the pinned upstream commit — see
-    // .github/workflows/build.yml. It has NO external dependencies of its
-    // own (opensdk/build.gradle declares no dependencies block).
-    implementation(files("libs/opensdk-release.aar"))
+    // v3.0: NewBlackbox virtual engine (ALEX5402/NewBlackbox, Apache-2.0).
+    // The Bcore AAR is built in CI from the pinned upstream commit plus
+    // the MaxCloner split-APK patch — see .github/workflows/build.yml
+    // and tools/patch-bcore-split.py.
+    implementation(files("libs/bcore-release.aar"))
 }
