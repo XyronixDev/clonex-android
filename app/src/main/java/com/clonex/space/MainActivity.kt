@@ -439,7 +439,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.3 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.4 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
