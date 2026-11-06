@@ -54,8 +54,8 @@ android {
         // break on higher targets. Consequence: sideload-only, never
         // Google Play. See ENGINE_RESEARCH.md.
         targetSdk = 26
-        versionCode = 12
-        versionName = "2.0.9"
+        versionCode = 13
+        versionName = "2.0.10"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
