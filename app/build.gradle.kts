@@ -165,6 +165,15 @@ dependencies {
 
     implementation(libs.androidx.datastore.preferences)
 
+    // v3.0: the Bcore AAR's resources need these (see libs.versions.toml):
+    // Bcore's LauncherTheme extends Theme.AppCompat.Light.NoActionBar
+    // and its launcher layout is a ConstraintLayout. An AAR does not
+    // carry transitive deps, so without these the app build fails at
+    // resource linking (run #90: Theme.AppCompat.Light.NoActionBar
+    // not found).
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.constraintlayout)
+
     // v3.0: NewBlackbox virtual engine (ALEX5402/NewBlackbox, Apache-2.0).
     // The Bcore AAR is built in CI from the pinned upstream commit plus
     // the MaxCloner split-APK patch — see .github/workflows/build.yml
