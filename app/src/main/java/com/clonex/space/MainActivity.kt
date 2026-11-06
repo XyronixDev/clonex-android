@@ -294,10 +294,16 @@ class MainActivity : ComponentActivity() {
     }
 
     internal suspend fun launchClone(entry: CloneEntry, engine: VirtualEngine): InstallOutcome {
-        val result = engine.launchApp(entry.packageName, entry.userId)
-        // A failed launch is exactly when the assist prompt helps.
-        val assist = assistIfNeeded(engine, entry.packageName, entry.userId)
-        return InstallOutcome(messageOf(result), assist)
+        return try {
+            val result = engine.launchApp(entry.packageName, entry.userId)
+            // A failed launch is exactly when the assist prompt helps.
+            val assist = assistIfNeeded(engine, entry.packageName, entry.userId)
+            InstallOutcome(messageOf(result), assist)
+        } catch (e: Exception) {
+            // Never let a launch failure escape into the click handler —
+            // an uncaught throw in the coroutine would kill the app.
+            InstallOutcome("Launch failed: ${e.message}")
+        }
     }
 
     internal suspend fun removeClone(
@@ -390,8 +396,17 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.0 (targetSdk 26, sideload-only)")
-            sb.appendLine("Engine: MultiApp opensdk (HackApi)")
+            sb.appendLine("CloneX: 2.0.1 (targetSdk 26, sideload-only)")
+            sb.appendLine(
+                "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
+            )
+            val lastCrash = CloneXApplication.readLastCrash(applicationContext)
+            if (lastCrash == null) {
+                sb.appendLine("Last crash: none recorded")
+            } else {
+                sb.appendLine("Last crash:")
+                sb.appendLine(lastCrash)
+            }
             try {
                 val props = engine.runtimeProperties()
                 if (props.isEmpty()) {
@@ -433,6 +448,7 @@ class MainActivity : ComponentActivity() {
     /** Launchable apps installed on the phone (for the Import Apps screen). */
     internal suspend fun listInstalledApps(): List<Pair<String, String>> =
         withContext(Dispatchers.IO) {
+            try {
             val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
             val pm = packageManager
             @Suppress("DEPRECATION")
@@ -450,6 +466,9 @@ class MainActivity : ComponentActivity() {
                 val label = info.loadLabel(pm)?.toString() ?: pkg
                 pkg to label
             }.sortedBy { it.second.lowercase() }
+            } catch (e: Exception) {
+                emptyList()
+            }
         }
 
     internal fun isPackageInstalledOnHost(packageName: String): Boolean {
@@ -649,20 +668,32 @@ private fun CloneXApp(
 
     BackHandler(enabled = screen != Screen.HOME) { screen = Screen.HOME }
 
-    // One-time reconciliation: engine-installed clones missing from the
-    // Room library are added back (engine is the source of truth).
+    // v2.0.1 two-way reconciliation: the ENGINE is the source of truth.
+    // Engine-installed clones missing from the library are added back,
+    // and library entries the engine does NOT report are removed — the
+    // v1.x stub entries (never real installs) must not survive as
+    // phantom clones. Runs ONLY while the engine is up: when the engine
+    // is down (or its call throws) the library is left untouched, so a
+    // transient engine failure can never wipe the library.
     LaunchedEffect(Unit) {
         try {
+            if (!engine.engineReady()) return@LaunchedEffect
             val engineClones = engine.listClones()
-            if (engineClones.isNotEmpty()) {
-                val existing = dao.getAllOnce()
-                for (ec in engineClones) {
-                    if (existing.none {
-                            it.packageName == ec.packageName && it.cloneIndex == ec.cloneIndex
-                        }
-                    ) {
-                        dao.insert(ec)
+            val existing = dao.getAllOnce()
+            for (ec in engineClones) {
+                if (existing.none {
+                        it.packageName == ec.packageName && it.cloneIndex == ec.cloneIndex
                     }
+                ) {
+                    dao.insert(ec)
+                }
+            }
+            for (old in existing) {
+                if (engineClones.none {
+                        it.packageName == old.packageName && it.cloneIndex == old.cloneIndex
+                    }
+                ) {
+                    dao.delete(old.packageName, old.cloneIndex)
                 }
             }
         } catch (e: Exception) {
@@ -1014,6 +1045,8 @@ private fun CloneXApp(
                         "ask to install it when needed.\n\n" +
                         "Banking / payment apps do not work inside any virtual " +
                         "space — they detect it and refuse.\n\n" +
+                        "If the app ever crashes, open ⋮ → Device Info — the " +
+                        "last crash is recorded there.\n\n" +
                         "More: github.com/XyronixDev/clonex-android"
                 )
             },
