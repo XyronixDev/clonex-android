@@ -145,6 +145,7 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           java -version
           cd multiapp
+                    chmod +x gradlew
           ./gradlew :opensdk:assembleRelease --stacktrace
           ls -la opensdk/build/outputs/aar/
           test -f opensdk/build/outputs/aar/opensdk-release.aar
@@ -169,6 +170,7 @@ jobs:
           cd multiapp
           sed -i 's/isMasterPkg = true/isMasterPkg = false/' build.gradle
           grep -n "isMasterPkg" build.gradle
+                    chmod +x gradlew
           ./gradlew :assist:assembleRelease --stacktrace
           ls -la assist/build/outputs/apk/release/ || true
 
