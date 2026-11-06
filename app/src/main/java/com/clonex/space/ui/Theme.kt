@@ -6,9 +6,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
 /**
- * CloneX v2.0 light theme — matches the MultiApp-style light UI the user
- * asked for: near-white lavender background, white cards, dark text,
- * blue #2B5CFF accent (FAB, + buttons, badges).
+ * CloneX light theme: near-white lavender background, white cards, dark
+ * text, blue #2B5CFF accent (FAB, + buttons, badges).
  */
 private val CloneXLightColors = lightColorScheme(
     primary = Color(0xFF2B5CFF),
