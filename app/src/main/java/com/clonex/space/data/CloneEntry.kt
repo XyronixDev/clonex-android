@@ -25,5 +25,7 @@ data class CloneEntry(
     val userId: Int = 0,
     /** Path of the APK file copied into CloneX storage, if imported via SAF. */
     val apkPath: String? = null,
-    val installedAt: Long = System.currentTimeMillis()
+    val installedAt: Long = System.currentTimeMillis(),
+    /** True when this clone lives in the Secret Zone (PIN-gated, hidden from home). */
+    val isPrivate: Boolean = false
 )
