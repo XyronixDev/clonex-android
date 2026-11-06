@@ -109,9 +109,10 @@ import java.util.concurrent.ConcurrentHashMap
  *    (Beta)", HOT section, A-Z list with a right-side alphabet index.
  *  - Long-press a clone: Launch / Clear data / Clear cache /
  *    Kill app / Remove.
- *  - Permissions (v2.0.7): CloneX asks for camera / mic / location /
- *    contacts / photos on first launch — a clone can only use what
- *    the host is granted, so without these the clone's features fail.
+ *  - Permissions (v2.0.8): declared in the manifest, asked ONLY when
+ *    the user taps a clone to launch it — never at app open (v2.0.7
+ *    asked on first launch and the app crashed / Play Store opened).
+ *    Settings → "Grant app permissions" re-asks any time.
  *
  * Room stays the UI cache; the engine is the source of truth for installs
  * (reconciled once at startup: engine-installed clones missing from the
@@ -472,7 +473,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.7 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.8 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
@@ -737,9 +738,6 @@ private fun CloneXApp(
     val googleSuiteInstalled by settings.googleSuiteInstalled.collectAsStateWithLifecycle(
         initialValue = false
     )
-    val permissionsRequested by settings.permissionsRequested.collectAsStateWithLifecycle(
-        initialValue = null
-    )
 
     var screen by remember { mutableStateOf(Screen.HOME) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -752,13 +750,17 @@ private fun CloneXApp(
     var installedApps by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
     val scope = rememberCoroutineScope()
 
-    // v2.0.7 — a clone can only use what the HOST is granted: the engine
+    // v2.0.8 — a clone can only use what the HOST is granted: the engine
     // forwards CloneX's permissions into the virtual space. A clone that
     // asks for camera / photos / location / contacts is denied when
     // CloneX itself was never granted them (the DarkPulse screenshot:
-    // Camera, Contacts, Location, Microphone all "Not allowed"). So
-    // CloneX declares them in the manifest and asks once on first
-    // launch; Settings can re-ask later.
+    // Camera, Contacts, Location, Microphone all "Not allowed"). CloneX
+    // declares them in the manifest — but NEVER asks at app open
+    // (v2.0.7 asked on first launch; the app then crashed and the Play
+    // Store opened). Permissions are asked only when the user taps a
+    // clone to launch it (launchWithPermissions below); Settings can
+    // also re-ask. The request is launched from a tap handler (the
+    // Activity is fully resumed), never from a startup effect.
     val context = LocalContext.current
     val clonePermissions: Array<String> = if (Build.VERSION.SDK_INT >= 33) {
         arrayOf(
@@ -784,24 +786,39 @@ private fun CloneXApp(
             Manifest.permission.WRITE_EXTERNAL_STORAGE
         )
     }
+    var pendingLaunch by remember { mutableStateOf<CloneEntry?>(null) }
     val requestClonePermissions = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
         val granted = results.count { it.value }
-        status = if (granted == results.size) {
-            "All ${results.size} permissions granted — clones can now use camera, photos, location and contacts."
-        } else {
-            "$granted of ${results.size} permissions granted. Denied ones stay off for clones — re-grant them from Settings → Grant app permissions, or system Settings → Apps → CloneX → Permissions."
+        if (granted < results.size) {
+            status = "$granted of ${results.size} permissions granted. Denied ones stay off for clones — re-grant them from Settings → Grant app permissions, or system Settings → Apps → CloneX → Permissions."
         }
-        scope.launch { settings.setPermissionsRequested(true) }
-    }
-    LaunchedEffect(permissionsRequested) {
-        if (permissionsRequested == false) {
-            val missing = clonePermissions.filter {
-                ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        val entry = pendingLaunch
+        pendingLaunch = null
+        if (entry != null) {
+            scope.launch {
+                val outcome = activity.launchClone(entry, engine)
+                status = outcome.message
+                assistRequest = outcome.assist
             }
-            if (missing.isNotEmpty()) requestClonePermissions.launch(missing.toTypedArray())
-            scope.launch { settings.setPermissionsRequested(true) }
+        }
+    }
+    /** Launch a clone, asking for any missing permissions first — only
+     *  at the moment the user taps the clone, never at app open. */
+    val launchWithPermissions: (CloneEntry) -> Unit = { entry ->
+        val missing = clonePermissions.filter {
+            ContextCompat.checkSelfPermission(context, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (missing.isEmpty()) {
+            scope.launch {
+                val outcome = activity.launchClone(entry, engine)
+                status = outcome.message
+                assistRequest = outcome.assist
+            }
+        } else {
+            pendingLaunch = entry
+            requestClonePermissions.launch(missing.toTypedArray())
         }
     }
 
@@ -910,13 +927,7 @@ private fun CloneXApp(
             googleSuiteInstalled = googleSuiteInstalled,
             onDeviceInfo = onDeviceInfo,
             onSettings = onSettings,
-            onLaunchClone = { entry ->
-                scope.launch {
-                    val outcome = activity.launchClone(entry, engine)
-                    status = outcome.message
-                    assistRequest = outcome.assist
-                }
-            },
+            onLaunchClone = launchWithPermissions,
             onCloneOptions = { cloneOptions = it },
             onAddAnotherClone = { entry ->
                 scope.launch {
@@ -986,11 +997,7 @@ private fun CloneXApp(
                 Column {
                     CloneOptionButton("Launch") {
                         cloneOptions = null
-                        scope.launch {
-                            val outcome = activity.launchClone(entry, engine)
-                            status = outcome.message
-                            assistRequest = outcome.assist
-                        }
+                        launchWithPermissions(entry)
                     }
                     CloneOptionButton("Clear data") {
                         cloneOptions = null
