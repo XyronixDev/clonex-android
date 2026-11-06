@@ -401,8 +401,17 @@ class MainActivity : ComponentActivity() {
                 fun note(result: EngineResult) {
                     when (result) {
                         is EngineResult.Ok -> anyOk = true
-                        is EngineResult.Failed ->
-                            if (firstFailure == null) firstFailure = result.reason
+                        is EngineResult.Failed -> {
+                            // v2.0.5: "already installed" means the Suite
+                            // IS there — count it as present so the menu
+                            // flips to Remove instead of offering Install
+                            // again for a Suite that already exists.
+                            if (result.reason.contains("already installed")) {
+                                anyOk = true
+                            } else if (firstFailure == null) {
+                                firstFailure = result.reason
+                            }
+                        }
                         is EngineResult.NotImplemented ->
                             if (firstFailure == null) firstFailure = result.reason
                     }
@@ -434,12 +443,51 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    /** v2.0.5 — remove Google Suite (the user asked for a Remove
+     *  option: the + menu kept offering Install even after the Suite
+     *  was already installed). Uninstalls the Play Store client plus
+     *  the three support packages from the virtual space. */
+    internal suspend fun removeGoogleSuite(engine: VirtualEngine): String =
+        withContext(Dispatchers.IO) {
+            try {
+                var anyOk = false
+                var firstFailure: String? = null
+                for (pkg in listOf(
+                    "com.waxmoon.ma.gp",
+                    "com.google.android.gms",
+                    "com.google.android.gsf",
+                    "com.android.vending"
+                )) {
+                    when (val result = engine.uninstallPackage(pkg, 0)) {
+                        is EngineResult.Ok -> anyOk = true
+                        is EngineResult.Failed -> {
+                            // Already gone counts as removed.
+                            if (result.reason.contains("engine code")) {
+                                anyOk = true
+                            } else if (firstFailure == null) {
+                                firstFailure = result.reason
+                            }
+                        }
+                        is EngineResult.NotImplemented ->
+                            if (firstFailure == null) firstFailure = result.reason
+                    }
+                }
+                if (anyOk) {
+                    "Google Suite removed."
+                } else {
+                    "Google Suite: ${firstFailure ?: "could not remove"}"
+                }
+            } catch (e: Exception) {
+                "Google Suite remove failed: ${e.message}"
+            }
+        }
+
     internal suspend fun loadDeviceInfo(engine: VirtualEngine): String =
         withContext(Dispatchers.IO) {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.4 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.5 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
@@ -452,10 +500,16 @@ class MainActivity : ComponentActivity() {
             }
             try {
                 val props = engine.runtimeProperties()
-                if (props.isEmpty()) {
-                    sb.appendLine("Engine properties: unavailable")
+                // v2.0.5: the raw map is mostly null/0 (process/appId/pkg/
+                // space) and reads like an error dump — show only
+                // entries that actually carry a value.
+                val shown = props.filter { (_, v) ->
+                    v != null && v.toString() != "null" && v.toString() != "0"
+                }
+                if (shown.isEmpty()) {
+                    sb.appendLine("Engine properties: (none reported)")
                 } else {
-                    for ((k, v) in props) sb.appendLine("$k = $v")
+                    for ((k, v) in shown) sb.appendLine("$k = $v")
                 }
             } catch (e: Exception) {
                 sb.appendLine("Engine properties: ${e.message}")
@@ -696,6 +750,9 @@ private fun CloneXApp(
     val notifications by settings.notificationsEnabled.collectAsStateWithLifecycle(
         initialValue = true
     )
+    val googleSuiteInstalled by settings.googleSuiteInstalled.collectAsStateWithLifecycle(
+        initialValue = false
+    )
 
     var screen by remember { mutableStateOf(Screen.HOME) }
     var status by remember { mutableStateOf<String?>(null) }
@@ -785,7 +842,22 @@ private fun CloneXApp(
 
     // Shared overflow-menu actions.
     val onInstallGoogleSuite: () -> Unit = {
-        scope.launch { status = activity.installGoogleSuite(engine) }
+        scope.launch {
+            status = activity.installGoogleSuite(engine)
+            if (status == "Google Suite ready.") {
+                settings.setGoogleSuiteInstalled(true)
+            }
+        }
+    }
+    // v2.0.5 — the user asked for a Remove option: the + menu kept
+    // offering Install even after the Suite was already installed.
+    val onRemoveGoogleSuite: () -> Unit = {
+        scope.launch {
+            status = activity.removeGoogleSuite(engine)
+            if (status == "Google Suite removed.") {
+                settings.setGoogleSuiteInstalled(false)
+            }
+        }
     }
     val onDeviceInfo: () -> Unit = { showDeviceInfo = true }
     val onSettings: () -> Unit = { showSettings = true }
@@ -799,6 +871,8 @@ private fun CloneXApp(
             onOpenSecret = { screen = Screen.SECRET },
             onOpenStorageManager = { showStorageManager = true },
             onInstallGoogleSuite = onInstallGoogleSuite,
+            onRemoveGoogleSuite = onRemoveGoogleSuite,
+            googleSuiteInstalled = googleSuiteInstalled,
             onDeviceInfo = onDeviceInfo,
             onSettings = onSettings,
             onShowHelp = { showHelp = true },
@@ -1146,6 +1220,8 @@ private fun CloneXHomeScreen(
     onOpenSecret: () -> Unit,
     onOpenStorageManager: () -> Unit,
     onInstallGoogleSuite: () -> Unit,
+    onRemoveGoogleSuite: () -> Unit,
+    googleSuiteInstalled: Boolean,
     onDeviceInfo: () -> Unit,
     onSettings: () -> Unit,
     onShowHelp: () -> Unit,
@@ -1186,8 +1262,19 @@ private fun CloneXHomeScreen(
                         onClick = { showFabMenu = false; onOpenImport() }
                     )
                     DropdownMenuItem(
-                        text = { Text("Install Google Suite") },
-                        onClick = { showFabMenu = false; onInstallGoogleSuite() }
+                        // v2.0.5 — once installed, the menu offers Remove
+                        // instead of Install (the user asked for it).
+                        text = {
+                            Text(
+                                if (googleSuiteInstalled) "Remove Google Suite"
+                                else "Install Google Suite"
+                            )
+                        },
+                        onClick = {
+                            showFabMenu = false
+                            if (googleSuiteInstalled) onRemoveGoogleSuite()
+                            else onInstallGoogleSuite()
+                        }
                     )
                     DropdownMenuItem(
                         text = { Text("Device Info") },
