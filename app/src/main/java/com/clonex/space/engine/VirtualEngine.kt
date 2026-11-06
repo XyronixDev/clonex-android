@@ -26,8 +26,8 @@ sealed interface EngineResult {
  *    believes it is normally installed,
  *  - keep each clone (userId) isolated from the others and from the phone.
  *
- * v2.0: the MultiApp opensdk (HackApi) operations are part of this
- * contract. Default implementations return NotImplemented so that
+ * v3.0: the NewBlackbox engine (BlackBoxCore) is the implementation.
+ * Default implementations return NotImplemented so that
  * StubVirtualEngine still compiles unchanged.
  */
 interface VirtualEngine {
@@ -51,40 +51,44 @@ interface VirtualEngine {
      */
     suspend fun engineReady(): Boolean = true
 
-    // --- v2.0: MultiApp opensdk (HackApi) operations -----------------------
+    // --- v3.0: NewBlackbox (BlackBoxCore) operations ----------------------
 
-    /** Clone an app already installed on the phone (installPackageFromHost). */
+    /** Clone an app already installed on the phone (installPackageAsUser). */
     suspend fun installFromHost(packageName: String, userId: Int): EngineResult =
         EngineResult.NotImplemented("installFromHost is not implemented by this engine.")
 
     /**
      * Install one APK file or a directory of split APKs
-     * (installApkFiles — a directory must contain only APKs of one app).
+     * (a directory must contain only APKs of one app; the base APK is
+     * installed first, then its splits are copied into the engine's
+     * splits dir for that package).
      */
     suspend fun installApkFiles(apkPathOrDir: String, userId: Int): EngineResult =
         EngineResult.NotImplemented("installApkFiles is not implemented by this engine.")
 
-    /** Wipe a clone's virtual data (deletePackageData). */
+    /** Wipe a clone's virtual data (clearPackage). */
     suspend fun clearCloneData(packageName: String, userId: Int): EngineResult =
         EngineResult.NotImplemented("clearCloneData is not implemented by this engine.")
 
-    /** Wipe a clone's virtual cache (deletePackageCache). */
+    /** Wipe a clone's virtual cache (its data/cache dir). */
     suspend fun clearCloneCache(packageName: String, userId: Int): EngineResult =
         EngineResult.NotImplemented("clearCloneCache is not implemented by this engine.")
 
-    /** Kill a clone's running processes (killApplication). */
+    /** Kill a clone's running processes (stopPackage). */
     suspend fun killClone(packageName: String, userId: Int): EngineResult =
         EngineResult.NotImplemented("killClone is not implemented by this engine.")
 
-    /** First free virtual user space for [packageName] (getAvailableUser). */
+    /** First free virtual user space for [packageName]. */
     suspend fun availableUser(packageName: String): Int = 0
 
-    /**
-     * True when the engine says this clone needs the 32-bit assist package
-     * (getPackageSetting "request_assistant").
-     */
-    suspend fun needsAssist(packageName: String, userId: Int): Boolean = false
+    /** True when Google Mobile Services are installed for [userId]. */
+    suspend fun isGmsInstalled(userId: Int): Boolean = false
 
-    /** Engine runtime properties (getRuntimeProperties), empty when unavailable. */
-    suspend fun runtimeProperties(): Map<String, Any?> = emptyMap()
+    /** Install Google Mobile Services into the virtual space (installGms). */
+    suspend fun installGms(userId: Int): EngineResult =
+        EngineResult.NotImplemented("installGms is not implemented by this engine.")
+
+    /** Remove Google Mobile Services from the virtual space (uninstallGms). */
+    suspend fun uninstallGms(userId: Int): EngineResult =
+        EngineResult.NotImplemented("uninstallGms is not implemented by this engine.")
 }
