@@ -118,6 +118,44 @@ class RealVirtualEngine(
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val label = hostLabel(packageName)
+                // v2.0.5 — split APKs (Instagram etc.): installPackageFromHost
+                // evidently copies only the base APK, and the clone then
+                // fails to launch (engine code 102 on the user's phone,
+                // Android 13 / SDK 33 — inside the engine's supported
+                // range, so the launch failure is the install, not the
+                // Android version). If the host app has split APKs, copy
+                // base + all splits into a temp dir and install the whole
+                // set with installApkFiles (the engine's split-APK path).
+                // A copy/IO failure falls back to installPackageFromHost.
+                val splits = splitApkFiles(packageName)
+                if (splits != null) {
+                    try {
+                        val dir = File(context.filesDir, "split-install/$packageName")
+                            .apply { mkdirs() }
+                        try {
+                            splits.forEach { src ->
+                                File(src).copyTo(
+                                    File(dir, File(src).name),
+                                    overwrite = true
+                                )
+                            }
+                            val ret = HackApi.installApkFiles(dir.absolutePath, userId, false)
+                            val result = installResult(ret, label, userId)
+                            if (result is EngineResult.Ok) {
+                                insertEntry(packageName, label, userId, null)
+                            }
+                            return@withContext result
+                        } finally {
+                            dir.deleteRecursively()
+                        }
+                    } catch (e: Exception) {
+                        Log.w(
+                            TAG,
+                            "split install failed, falling back to installPackageFromHost",
+                            e
+                        )
+                    }
+                }
                 val ret = HackApi.installPackageFromHost(packageName, userId, false)
                 val result = installResult(ret, label, userId)
                 if (result is EngineResult.Ok) {
@@ -129,6 +167,19 @@ class RealVirtualEngine(
                 EngineResult.Failed("Install failed: ${e.message}")
             }
         }
+
+    /** Base APK + split APK paths for a host-installed app, or null when
+     *  the app is a single APK (or its splits cannot be read). */
+    private fun splitApkFiles(packageName: String): List<String>? {
+        return try {
+            val info = context.packageManager.getApplicationInfo(packageName, 0)
+            val splits = info.splitSourceDirs
+            if (splits.isNullOrEmpty()) null
+            else listOf(info.sourceDir) + splits.toList()
+        } catch (e: Exception) {
+            null
+        }
+    }
 
     override suspend fun installApkFiles(apkPathOrDir: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
