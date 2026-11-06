@@ -5,10 +5,9 @@
       CloneX needs these permissions for its core job:
       - QUERY_ALL_PACKAGES: list the apps installed on the phone so the user
         can pick one to clone into the virtual space.
-      - REQUEST_INSTALL_PACKAGES: install the 32-bit assist package
-        (com.clonex.space.assist) through the system installer when the
-        engine says a clone needs it. CloneX never silently installs
-        anything; every install is started by the user.
+      - REQUEST_INSTALL_PACKAGES: kept for the system installer path
+        (installing APKs the user picks from storage). CloneX never
+        silently installs anything; every install is started by the user.
       No root, no banking-bypass, no hidden installs.
     -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
@@ -47,18 +46,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-
-        <!-- FileProvider for handing the bundled assist APK
-             (assets/assist.apk) to the system installer. -->
-        <provider
-            android:name="androidx.core.content.FileProvider"
-            android:authorities="${applicationId}.fileprovider"
-            android:exported="false"
-            android:grantUriPermissions="true">
-            <meta-data
-                android:name="android.support.FILE_PROVIDER_PATHS"
-                android:resource="@xml/file_paths" />
-        </provider>
+        <!-- v3.0: the NewBlackbox engine's ~355 stub components merge in
+             from the Bcore AAR — no stub entries are declared here. The
+             old opensdk FileProvider (assist APK) is gone: NewBlackbox
+             needs no assist package. -->
     </application>
 
 </manifest>
