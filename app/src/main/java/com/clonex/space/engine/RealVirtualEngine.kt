@@ -174,23 +174,19 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                // v2.0.3 — try the engine's own startPackage FIRST.
-                // v2.0.1 (engine intent first) and v2.0.2 (host intent
-                // first, demo-exact) both reported START_SUCCESS while
-                // nothing opened on the user's phone — the intent path
-                // is not the problem there. startPackage is the engine's
-                // own high-level launch (CMD_START_PACKAGE); if it also
-                // reports success with nothing opening, the failure is
-                // downstream (agent process / AMS hooks on this Android
-                // version) — MainActivity now verifies the agent process
-                // is actually alive 5s after a reported success.
+                // v2.0.4 — three shots at the launch, because the user's
+                // phone returns a real engine error (code 102) instead of
+                // opening the clone. Shot 1: the engine's own startPackage.
+                // Shot 2: the MultiApp demo's intent sequence (host intent
+                // + RESET_TASK_IF_NEEDED, ret == START_SUCCESS only).
+                // Shot 3 (only after a failure): kill any stale agent
+                // process for this package, then retry with the ENGINE's
+                // own launch intent — the virtual component, which skips
+                // the host-intent rewrite that may be failing with 102.
                 @Suppress("DEPRECATION")
                 if (HackApi.startPackage(packageName, userId)) {
                     return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
                 }
-                // Fallback: the MultiApp demo's intent sequence
-                // (host intent + RESET_TASK_IF_NEEDED, then the engine's
-                // intent), still requiring ret == START_SUCCESS (0).
                 val hostIntent = try {
                     context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
                         addFlags(
@@ -201,17 +197,33 @@ class RealVirtualEngine(
                 } catch (e: Exception) {
                     null
                 }
-                val intent = hostIntent
-                    ?: HackApi.getLaunchIntentForPackage(packageName, userId)?.apply {
+                if (hostIntent != null) {
+                    val ret = HackApi.startActivity(hostIntent, userId)
+                    if (ret == START_SUCCESS) {
+                        return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
+                    }
+                    Log.w(TAG, "launchApp host-intent failed code=$ret pkg=$packageName")
+                }
+                // Shot 3: clear a possibly stuck agent process, then try
+                // the engine's own intent for this package.
+                try {
+                    HackApi.killApplication(userId, packageName, "clonex-launch-retry")
+                } catch (e: Exception) {
+                    Log.w(TAG, "launchApp killApplication failed", e)
+                }
+                val engineIntent = try {
+                    HackApi.getLaunchIntentForPackage(packageName, userId)?.apply {
                         addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
                     }
-                if (intent != null) {
-                    val ret = HackApi.startActivity(intent, userId)
-                    return@withContext if (ret == START_SUCCESS) {
-                        EngineResult.Ok("Launching ${hostLabel(packageName)}…")
-                    } else {
-                        EngineResult.Failed("Launch failed (engine code $ret).")
+                } catch (e: Exception) {
+                    null
+                }
+                if (engineIntent != null) {
+                    val ret = HackApi.startActivity(engineIntent, userId)
+                    if (ret == START_SUCCESS) {
+                        return@withContext EngineResult.Ok("Launching ${hostLabel(packageName)}…")
                     }
+                    return@withContext EngineResult.Failed("Launch failed (engine code $ret).")
                 }
                 EngineResult.Failed(
                     "No launchable activity found for $packageName in this space."
