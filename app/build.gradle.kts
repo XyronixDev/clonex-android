@@ -41,17 +41,21 @@ android {
     namespace = "com.clonex.space"
     compileSdk = 37
 
-    // Declared only — no native .so is bundled in this MVP.
-    // The real virtual engine (native hooking) is a later step; see
-    // app/src/main/java/com/clonex/space/engine/ENGINE_NOTES.md
+    // v2.0: the MultiApp opensdk engine ships its native libs (.so) in the
+    // AAR. The demo app uses legacy packaging for them; keep the same here
+    // so the engine can find its libs the way it expects.
     ndkVersion = "27.2.12479018"
 
     defaultConfig {
         applicationId = "com.clonex.space"
         minSdk = 26
-        targetSdk = 36
-        versionCode = 2
-        versionName = "1.1.0"
+        // v2.0: targetSdk 26 is an ENGINE requirement — the MultiApp
+        // opensdk itself targets 26, and the engine's hidden-API hooks
+        // break on higher targets. Consequence: sideload-only, never
+        // Google Play. See ENGINE_RESEARCH.md.
+        targetSdk = 26
+        versionCode = 3
+        versionName = "2.0.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -116,6 +120,15 @@ android {
             isUniversalApk = false
         }
     }
+
+    packaging {
+        jniLibs {
+            // The MultiApp opensdk demo uses legacy .so packaging; the
+            // engine extracts its libs from moon.jar itself, and legacy
+            // packaging keeps the AAR's libl.so / libpl.so loadable.
+            useLegacyPackaging = true
+        }
+    }
 }
 
 // JVM target for Kotlin compilation (AGP 9 built-in Kotlin: the
@@ -142,4 +155,10 @@ dependencies {
     ksp(libs.androidx.room.compiler)
 
     implementation(libs.androidx.datastore.preferences)
+
+    // v2.0: MultiApp opensdk virtual engine (WaxMoon, AGPL-3.0). The AAR is
+    // built in CI from the pinned upstream commit — see
+    // .github/workflows/build.yml. It has NO external dependencies of its
+    // own (opensdk/build.gradle declares no dependencies block).
+    implementation(files("libs/opensdk-release.aar"))
 }
