@@ -124,6 +124,45 @@ in-app experience; work profile for compatibility/security.
     Chrome (WebView), one banking app (expect clean refusal, not host crash).
     Test Android 14/15 if possible.
 
+## v2.0 update (2026-11-06) — engine decision changed
+
+The NewBlackbox / MaxCloner route above is **superseded**. The user
+ordered (2026-11-06 18:05) adoption of **ALL** plus points of
+WaxMoon/MultiApp, engine included. CloneX v2.0 therefore uses the
+**MultiApp opensdk (HackApi)** as its real virtual engine:
+
+- Engine: WaxMoon/MultiApp, pinned commit
+  `3de55af64ec925de390cbf30bb82f279a51945e0` (opensdk submodule `eaab164`),
+  **AGPL-3.0**. CloneX source stays public under AGPL-3.0 with
+  attribution (see README.md "Open-source attribution").
+- Integration: the opensdk AAR is built in CI (`:opensdk:assembleRelease`,
+  JDK 11, AGP 7.0.2, Gradle 7.0.2) with the root `build.gradle` ext block
+  patched so `MASTER_PACKAGE=com.clonex.space` and
+  `ASSIST_PACKAGE=com.clonex.space.assist` are baked into the AAR's
+  BuildConfig; the assist APK is built from the same checkout
+  (`:assist:assembleRelease`) and bundled as `assets/assist.apk`.
+  See `.github/workflows/build.yml` and
+  `app/src/main/java/com/clonex/space/engine/ENGINE_NOTES.md`.
+- **targetSdk 26** (the engine itself targets 26) — sideload-only, never
+  Google Play. This replaces the earlier targetSdk-28 decision question.
+- Adopted plus points: true sandbox (no Java proxy, seccomp/bpf hooks),
+  split-APK install, Play Services in container, master+assist packages,
+  lifecycle callbacks + killApplication, device-info faking (engine-side),
+  Private Space (Secret Zone), Storage Manager (per-clone Clear data /
+  Clear cache), simple 3-call API surface.
+- Known risk, unchanged: the engine is frozen since 2023 (Android 14
+  max) — verify on the phone. If it fails on newer Android, the
+  NewBlackbox / MaxCloner research above is the fallback.
+- The NewBlackbox / MaxCloner research below is kept as fallback
+  research only — do not start a second engine integration without a
+  user decision.
+- MaxCloner v4.1.0 release (2 Aug 2026) ships ONLY APKs
+  (arm64-v8a 4.9 MB, armeabi-v7a, universal) — NO prebuilt Bcore AAR.
+  The AAR must be built from source: clone the repo,
+  `./gradlew :Bcore:assembleRelease` (JDK 21, NDK 29.0.13846066, AGP 8.13.2).
+  Same presumably for NewBlackbox releases — verify when building.
+- Size reference: a full engine host app (MaxCloner arm64 APK) is ~4.9 MB.
+
 ## Sources (read 2026-11-06)
 - https://github.com/FBlackBox/BlackBox (dissolution notice)
 - https://github.com/ALEX5402/NewBlackbox (README, releases, Docs.md, CLAUDE.md)
