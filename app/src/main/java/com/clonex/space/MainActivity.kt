@@ -175,7 +175,8 @@ class MainActivity : ComponentActivity() {
                     assistIfNeeded(engine, packageName, userId)
                 } else {
                     null
-                }
+                },
+                success = result is EngineResult.Ok
             )
         } catch (e: Exception) {
             InstallOutcome("Import failed: ${e.message}")
@@ -258,7 +259,8 @@ class MainActivity : ComponentActivity() {
                     assistIfNeeded(engine, packageName, userId)
                 } else {
                     null
-                }
+                },
+                success = result is EngineResult.Ok
             )
         } catch (e: Exception) {
             InstallOutcome("Split-APK import failed: ${e.message}")
@@ -286,7 +288,8 @@ class MainActivity : ComponentActivity() {
                     assistIfNeeded(engine, packageName, userId)
                 } else {
                     null
-                }
+                },
+                success = result is EngineResult.Ok
             )
         } catch (e: Exception) {
             InstallOutcome("Could not add app: ${e.message}")
@@ -355,19 +358,29 @@ class MainActivity : ComponentActivity() {
     internal suspend fun installGoogleSuite(engine: VirtualEngine): String =
         withContext(Dispatchers.IO) {
             try {
-                val parts = mutableListOf<String>()
+                // v2.0.2: one short line, never the per-package wall of
+                // text the user called out. The Google support packages
+                // (gms / gsf / vending) are engine internals — they are
+                // filtered out of the home clone list (INTERNAL_PACKAGES).
+                var anyOk = false
+                var firstFailure: String? = null
+                fun note(result: EngineResult) {
+                    when (result) {
+                        is EngineResult.Ok -> anyOk = true
+                        is EngineResult.Failed ->
+                            if (firstFailure == null) firstFailure = result.reason
+                        is EngineResult.NotImplemented ->
+                            if (firstFailure == null) firstFailure = result.reason
+                    }
+                }
                 try {
                     val gpFile = File(cacheDir, "clonex-gp.apk")
                     assets.open("com.waxmoon.ma.gp.apk").use { input ->
                         gpFile.outputStream().use { output -> input.copyTo(output) }
                     }
-                    when (val r = engine.installApkFiles(gpFile.absolutePath, 0)) {
-                        is EngineResult.Ok -> parts += "Play Store (com.waxmoon.ma.gp): installed"
-                        is EngineResult.Failed -> parts += "Play Store: ${r.reason}"
-                        is EngineResult.NotImplemented -> parts += "Play Store: ${r.reason}"
-                    }
+                    note(engine.installApkFiles(gpFile.absolutePath, 0))
                 } catch (e: Exception) {
-                    parts += "Play Store: ${e.message}"
+                    if (firstFailure == null) firstFailure = e.message
                 }
                 for (pkg in listOf(
                     "com.google.android.gms",
@@ -375,16 +388,12 @@ class MainActivity : ComponentActivity() {
                     "com.android.vending"
                 )) {
                     if (!isPackageInstalledOnHost(pkg)) continue
-                    when (val r = engine.installFromHost(pkg, 0)) {
-                        is EngineResult.Ok -> parts += "$pkg: installed"
-                        is EngineResult.Failed -> parts += "$pkg: ${r.reason}"
-                        is EngineResult.NotImplemented -> parts += "$pkg: ${r.reason}"
-                    }
+                    note(engine.installFromHost(pkg, 0))
                 }
-                if (parts.isEmpty()) {
-                    "Google Suite: nothing to install — no Google apps found on this phone."
+                if (anyOk) {
+                    "Google Suite ready."
                 } else {
-                    "Google Suite:\n" + parts.joinToString("\n")
+                    "Google Suite: ${firstFailure ?: "could not install"}"
                 }
             } catch (e: Exception) {
                 "Google Suite install failed: ${e.message}"
@@ -396,7 +405,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.1 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.2 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
@@ -556,7 +565,9 @@ class MainActivity : ComponentActivity() {
  * optional prompt to install the 32-bit assist package. */
 data class InstallOutcome(
     val message: String,
-    val assist: AssistRequest? = null
+    val assist: AssistRequest? = null,
+    /** True when the install really succeeded — the UI auto-returns home. */
+    val success: Boolean = false
 )
 
 data class AssistRequest(val packageName: String, val userId: Int)
@@ -721,6 +732,7 @@ private fun CloneXApp(
                 val outcome = activity.importApkFile(uri, engine, dao, maxClones)
                 status = outcome.message
                 assistRequest = outcome.assist
+                if (outcome.success) screen = Screen.HOME
             }
         }
     }
@@ -732,6 +744,7 @@ private fun CloneXApp(
                 val outcome = activity.importApkDirectory(uri, engine, dao, maxClones)
                 status = outcome.message
                 assistRequest = outcome.assist
+                if (outcome.success) screen = Screen.HOME
             }
         }
     }
@@ -770,6 +783,7 @@ private fun CloneXApp(
                     )
                     status = outcome.message
                     assistRequest = outcome.assist
+                        if (outcome.success) screen = Screen.HOME
                 }
             }
         )
@@ -791,6 +805,7 @@ private fun CloneXApp(
                     val outcome = activity.addInstalledApp(pkg, label, engine, dao, maxClones)
                     status = outcome.message
                     assistRequest = outcome.assist
+                    if (outcome.success) screen = Screen.HOME
                 }
             }
         )
@@ -816,6 +831,7 @@ private fun CloneXApp(
                     )
                     status = outcome.message
                     assistRequest = outcome.assist
+                        if (outcome.success) screen = Screen.HOME
                 }
             }
         )
@@ -1104,7 +1120,6 @@ private fun CloneXHomeScreen(
     onAddAnotherClone: (CloneEntry) -> Unit
 ) {
     var query by remember { mutableStateOf("") }
-    var showTopMenu by remember { mutableStateOf(false) }
     var showFabMenu by remember { mutableStateOf(false) }
 
     val visibleClones = remember(clones) { clones.filter { !it.isPrivate } }
@@ -1144,6 +1159,10 @@ private fun CloneXHomeScreen(
                         text = { Text("Device Info") },
                         onClick = { showFabMenu = false; onDeviceInfo() }
                     )
+                    DropdownMenuItem(
+                        text = { Text("Settings") },
+                        onClick = { showFabMenu = false; onSettings() }
+                    )
                 }
             }
         }
@@ -1154,7 +1173,8 @@ private fun CloneXHomeScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Title top-left, 3-dot menu top-right.
+            // Title top-left. (v2.0.2: no 3-dot menu — everything is
+            // reachable from the + button and the feature card.)
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     "CloneX",
@@ -1162,38 +1182,6 @@ private fun CloneXHomeScreen(
                     fontWeight = FontWeight.ExtraBold,
                     color = Color(0xFF14141A)
                 )
-                Spacer(Modifier.weight(1f))
-                Box {
-                    TextButton(onClick = { showTopMenu = true }) {
-                        Text(
-                            "⋮",
-                            fontSize = 26.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color(0xFF14141A)
-                        )
-                    }
-                    DropdownMenu(
-                        expanded = showTopMenu,
-                        onDismissRequest = { showTopMenu = false }
-                    ) {
-                        DropdownMenuItem(
-                            text = { Text("Import Apps") },
-                            onClick = { showTopMenu = false; onOpenImport() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Install Google Suite") },
-                            onClick = { showTopMenu = false; onInstallGoogleSuite() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Device Info") },
-                            onClick = { showTopMenu = false; onDeviceInfo() }
-                        )
-                        DropdownMenuItem(
-                            text = { Text("Settings") },
-                            onClick = { showTopMenu = false; onSettings() }
-                        )
-                    }
-                }
             }
 
             Spacer(Modifier.height(16.dp))
@@ -1501,7 +1489,6 @@ private fun ImportAppsScreen(
 ) {
     var query by remember { mutableStateOf("") }
     var showSearch by remember { mutableStateOf(false) }
-    var showTopMenu by remember { mutableStateOf(false) }
     var showImportChoice by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val listState = rememberLazyListState()
@@ -1563,28 +1550,6 @@ private fun ImportAppsScreen(
             Spacer(Modifier.weight(1f))
             TextButton(onClick = { showSearch = !showSearch }) {
                 Text("⌕", fontSize = 22.sp, color = Color(0xFF14141A))
-            }
-            Box {
-                TextButton(onClick = { showTopMenu = true }) {
-                    Text("⋮", fontSize = 26.sp, fontWeight = FontWeight.Bold, color = Color(0xFF14141A))
-                }
-                DropdownMenu(
-                    expanded = showTopMenu,
-                    onDismissRequest = { showTopMenu = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text("Install Google Suite") },
-                        onClick = { showTopMenu = false; onInstallGoogleSuite() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Device Info") },
-                        onClick = { showTopMenu = false; onDeviceInfo() }
-                    )
-                    DropdownMenuItem(
-                        text = { Text("Settings") },
-                        onClick = { showTopMenu = false; onSettings() }
-                    )
-                }
             }
         }
 
