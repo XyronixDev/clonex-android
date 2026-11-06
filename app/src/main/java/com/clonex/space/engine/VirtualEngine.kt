@@ -44,6 +44,13 @@ interface VirtualEngine {
     /** Clones currently known to the engine (may be empty in the stub). */
     suspend fun listClones(): List<CloneEntry>
 
+    /**
+     * v2.0.1: false when the engine failed to start (its init threw) —
+     * callers must not delete library entries or trust an empty clone
+     * list while the engine is down. Default true (stub / healthy).
+     */
+    suspend fun engineReady(): Boolean = true
+
     // --- v2.0: MultiApp opensdk (HackApi) operations -----------------------
 
     /** Clone an app already installed on the phone (installPackageFromHost). */
