@@ -27,7 +27,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -102,13 +101,11 @@ import java.util.concurrent.ConcurrentHashMap
  * CloneX v2.0 — light-mode UI styled like the MultiApp screenshots, on the
  * real MultiApp opensdk virtual engine (RealVirtualEngine / HackApi).
  *
- *  - Home: "CloneX" title top-left, 3-dot menu top-right, white feature
- *    card (Secret Zone / Storage Manager / Device Info / Find Help),
- *    clone grid with real icons, blue circular + FAB bottom-right.
+ *  - Home (v2.0.6): blank — only the clone grid and the blue circular
+ *    + FAB bottom-right. Everything else lives in the + menu.
  *  - Import Apps: its own screen — back arrow, search, "Import from file
  *    (Beta)", HOT section, A-Z list with a right-side alphabet index.
- *  - Secret Zone: PIN-gated private clones (hidden from the home grid).
- *  - Long-press a clone: Launch / Secret Zone / Clear data / Clear cache /
+ *  - Long-press a clone: Launch / Clear data / Clear cache /
  *    Kill app / Remove.
  *
  * Room stays the UI cache; the engine is the source of truth for installs
@@ -365,16 +362,6 @@ class MainActivity : ComponentActivity() {
             "${entry.label} removed from the library only (virtual install untouched)."
         }
 
-    internal suspend fun setClonePrivate(
-        entry: CloneEntry,
-        isPrivate: Boolean,
-        dao: CloneDao
-    ): String = withContext(Dispatchers.IO) {
-        dao.setPrivate(entry.packageName, entry.cloneIndex, isPrivate)
-        if (isPrivate) "${entry.label} moved to the Secret Zone."
-        else "${entry.label} moved back to the home grid."
-    }
-
     internal suspend fun clearCloneData(entry: CloneEntry, engine: VirtualEngine): String =
         messageOf(engine.clearCloneData(entry.packageName, entry.userId))
 
@@ -385,9 +372,12 @@ class MainActivity : ComponentActivity() {
         messageOf(engine.killClone(entry.packageName, entry.userId))
 
     /**
-     * Google Suite: the Play Store build bundled with the engine AAR
-     * (assets/com.waxmoon.ma.gp.apk, package com.waxmoon.ma.gp) plus the
-     * host's Google packages (GMS / GSF / vending) when present on the phone.
+     * Google Suite (v2.0.6): services ONLY — the host's Google packages
+     * (GMS / GSF) when present on the phone. The Play Store client
+     * (bundled com.waxmoon.ma.gp.apk) and the vending package are NOT
+     * installed anymore: the store is what showed "MultiApp" branding
+     * and is what clones got redirected to. removeGoogleSuite still
+     * uninstalls all four, so an older install gets cleaned up.
      */
     internal suspend fun installGoogleSuite(engine: VirtualEngine): String =
         withContext(Dispatchers.IO) {
@@ -416,19 +406,9 @@ class MainActivity : ComponentActivity() {
                             if (firstFailure == null) firstFailure = result.reason
                     }
                 }
-                try {
-                    val gpFile = File(cacheDir, "clonex-gp.apk")
-                    assets.open("com.waxmoon.ma.gp.apk").use { input ->
-                        gpFile.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    note(engine.installApkFiles(gpFile.absolutePath, 0))
-                } catch (e: Exception) {
-                    if (firstFailure == null) firstFailure = e.message
-                }
                 for (pkg in listOf(
                     "com.google.android.gms",
-                    "com.google.android.gsf",
-                    "com.android.vending"
+                    "com.google.android.gsf"
                 )) {
                     if (!isPackageInstalledOnHost(pkg)) continue
                     note(engine.installFromHost(pkg, 0))
@@ -487,7 +467,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.5 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.6 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
@@ -666,7 +646,7 @@ private fun messageOf(result: EngineResult): String = when (result) {
     is EngineResult.NotImplemented -> result.reason
 }
 
-private enum class Screen { HOME, IMPORT, SECRET }
+private enum class Screen { HOME, IMPORT }
 
 /**
  * Real app icons, loaded from PackageManager and cached in memory.
@@ -746,7 +726,6 @@ private fun CloneXApp(
     val maxClones by settings.maxClones.collectAsStateWithLifecycle(
         initialValue = SettingsStore.DEFAULT_MAX_CLONES
     )
-    val secretPin by settings.secretPin.collectAsStateWithLifecycle(initialValue = "")
     val notifications by settings.notificationsEnabled.collectAsStateWithLifecycle(
         initialValue = true
     )
@@ -759,12 +738,9 @@ private fun CloneXApp(
     var assistRequest by remember { mutableStateOf<AssistRequest?>(null) }
     var cloneOptions by remember { mutableStateOf<CloneEntry?>(null) }
     var showSettings by remember { mutableStateOf(false) }
-    var showStorageManager by remember { mutableStateOf(false) }
-    var showHelp by remember { mutableStateOf(false) }
     var showLicenses by remember { mutableStateOf(false) }
     var showDeviceInfo by remember { mutableStateOf(false) }
     var deviceInfoText by remember { mutableStateOf<String?>(null) }
-    var secretUnlocked by remember { mutableStateOf(false) }
     var installedApps by remember { mutableStateOf<List<Pair<String, String>>?>(null) }
     val scope = rememberCoroutineScope()
 
@@ -868,14 +844,11 @@ private fun CloneXApp(
             status = status,
             onStatusDismiss = { status = null },
             onOpenImport = { screen = Screen.IMPORT },
-            onOpenSecret = { screen = Screen.SECRET },
-            onOpenStorageManager = { showStorageManager = true },
             onInstallGoogleSuite = onInstallGoogleSuite,
             onRemoveGoogleSuite = onRemoveGoogleSuite,
             googleSuiteInstalled = googleSuiteInstalled,
             onDeviceInfo = onDeviceInfo,
             onSettings = onSettings,
-            onShowHelp = { showHelp = true },
             onLaunchClone = { entry ->
                 scope.launch {
                     val outcome = activity.launchClone(entry, engine)
@@ -914,32 +887,6 @@ private fun CloneXApp(
                     status = outcome.message
                     assistRequest = outcome.assist
                     if (outcome.success) screen = Screen.HOME
-                }
-            }
-        )
-        Screen.SECRET -> SecretZoneScreen(
-            clones = clones.filter { it.isPrivate },
-            pin = secretPin,
-            unlocked = secretUnlocked,
-            onUnlockedChange = { secretUnlocked = it },
-            settings = settings,
-            onBack = { screen = Screen.HOME },
-            onLaunchClone = { entry ->
-                scope.launch {
-                    val outcome = activity.launchClone(entry, engine)
-                    status = outcome.message
-                    assistRequest = outcome.assist
-                }
-            },
-            onCloneOptions = { cloneOptions = it },
-            onAddAnotherClone = { entry ->
-                scope.launch {
-                    val outcome = activity.addInstalledApp(
-                        entry.packageName, entry.label, engine, dao, maxClones
-                    )
-                    status = outcome.message
-                    assistRequest = outcome.assist
-                        if (outcome.success) screen = Screen.HOME
                 }
             }
         )
@@ -982,15 +929,6 @@ private fun CloneXApp(
                             val outcome = activity.launchClone(entry, engine)
                             status = outcome.message
                             assistRequest = outcome.assist
-                        }
-                    }
-                    CloneOptionButton(
-                        if (entry.isPrivate) "Remove from Secret Zone"
-                        else "Move to Secret Zone"
-                    ) {
-                        cloneOptions = null
-                        scope.launch {
-                            status = activity.setClonePrivate(entry, !entry.isPrivate, dao)
                         }
                     }
                     CloneOptionButton("Clear data") {
@@ -1096,90 +1034,6 @@ private fun CloneXApp(
         )
     }
 
-    if (showStorageManager) {
-        AlertDialog(
-            onDismissRequest = { showStorageManager = false },
-            title = { Text("Storage Manager") },
-            text = {
-                if (clones.isEmpty()) {
-                    Text("No clones yet — nothing to manage.")
-                } else {
-                    LazyColumn(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 400.dp)
-                    ) {
-                        items(clones, key = { it.packageName + "#" + it.cloneIndex }) { entry ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Column(modifier = Modifier.weight(1f)) {
-                                    Text(
-                                        entry.label,
-                                        fontWeight = FontWeight.SemiBold,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                    Text(
-                                        "Clone ${entry.cloneIndex + 1} • ${entry.packageName}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis
-                                    )
-                                }
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        status = activity.clearCloneCache(entry, engine)
-                                    }
-                                }) { Text("Cache") }
-                                TextButton(onClick = {
-                                    scope.launch {
-                                        status = activity.clearCloneData(entry, engine)
-                                    }
-                                }) { Text("Data") }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showStorageManager = false }) { Text("Close") }
-            }
-        )
-    }
-
-    if (showHelp) {
-        AlertDialog(
-            onDismissRequest = { showHelp = false },
-            title = { Text("Find Help") },
-            text = {
-                Text(
-                    "How to clone an app:\n\n" +
-                        "1. Tap + (bottom-right) → Import Apps.\n" +
-                        "2. Tap + next to an app, or import an APK file.\n" +
-                        "   Split APKs (WhatsApp, Facebook): pick the folder " +
-                        "with “Import from file (Beta)” → APK folder.\n" +
-                        "3. Tap a clone card to launch it in the virtual space.\n" +
-                        "4. Long-press a clone for Clear data / Kill app / Remove.\n\n" +
-                        "32-bit-only apps need the assist package — CloneX will " +
-                        "ask to install it when needed.\n\n" +
-                        "Banking / payment apps do not work inside any virtual " +
-                        "space — they detect it and refuse.\n\n" +
-                        "If the app ever crashes, open ⋮ → Device Info — the " +
-                        "last crash is recorded there.\n\n" +
-                        "More: github.com/XyronixDev/clonex-android"
-                )
-            },
-            confirmButton = {
-                TextButton(onClick = { showHelp = false }) { Text("Close") }
-            }
-        )
-    }
-
     if (showDeviceInfo) {
         AlertDialog(
             onDismissRequest = { showDeviceInfo = false },
@@ -1217,29 +1071,18 @@ private fun CloneXHomeScreen(
     status: String?,
     onStatusDismiss: () -> Unit,
     onOpenImport: () -> Unit,
-    onOpenSecret: () -> Unit,
-    onOpenStorageManager: () -> Unit,
     onInstallGoogleSuite: () -> Unit,
     onRemoveGoogleSuite: () -> Unit,
     googleSuiteInstalled: Boolean,
     onDeviceInfo: () -> Unit,
     onSettings: () -> Unit,
-    onShowHelp: () -> Unit,
     onLaunchClone: (CloneEntry) -> Unit,
     onCloneOptions: (CloneEntry) -> Unit,
     onAddAnotherClone: (CloneEntry) -> Unit
 ) {
-    var query by remember { mutableStateOf("") }
     var showFabMenu by remember { mutableStateOf(false) }
 
-    val visibleClones = remember(clones) { clones.filter { !it.isPrivate } }
-    val shown = remember(visibleClones, query) {
-        if (query.isBlank()) visibleClones
-        else visibleClones.filter {
-            it.label.contains(query, ignoreCase = true) ||
-                it.packageName.contains(query, ignoreCase = true)
-        }
-    }
+    val visibleClones = remember(clones) { clones }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -1294,67 +1137,6 @@ private fun CloneXHomeScreen(
                 .padding(padding)
                 .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            // Title top-left. (v2.0.2: no 3-dot menu — everything is
-            // reachable from the + button and the feature card.)
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "CloneX",
-                    fontSize = 30.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    color = Color(0xFF14141A)
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            // White feature card: 4 real tools, no upsell — the app is
-            // already PRO, everything unlocked from the start.
-            Card(
-                colors = CardDefaults.cardColors(containerColor = Color.White),
-                shape = RoundedCornerShape(20.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-            ) {
-                Column(modifier = Modifier.padding(vertical = 16.dp, horizontal = 8.dp)) {
-                    Row {
-                        FeatureItem(
-                            emoji = "🔒",
-                            label = "Secret Zone",
-                            tint = Color(0xFFE8F0FF),
-                            onClick = onOpenSecret
-                        )
-                        FeatureItem(
-                            emoji = "💾",
-                            label = "Storage Manager",
-                            tint = Color(0xFFE6F7E6),
-                            onClick = onOpenStorageManager
-                        )
-                        FeatureItem(
-                            emoji = "📱",
-                            label = "Device Info",
-                            tint = Color(0xFFE3F2FD),
-                            onClick = onDeviceInfo
-                        )
-                        FeatureItem(
-                            emoji = "❓",
-                            label = "Find Help",
-                            tint = Color(0xFFF0F0F2),
-                            onClick = onShowHelp
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-
-            OutlinedTextField(
-                value = query,
-                onValueChange = { query = it },
-                modifier = Modifier.fillMaxWidth(),
-                placeholder = { Text("Search clones…") },
-                singleLine = true,
-                shape = RoundedCornerShape(16.dp)
-            )
-
             status?.let { message ->
                 Spacer(Modifier.height(12.dp))
                 Card(
@@ -1375,27 +1157,13 @@ private fun CloneXHomeScreen(
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
-
-            if (shown.isEmpty()) {
-                // Clean blank home — no big illustration, just a quiet hint.
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = if (visibleClones.isEmpty()) {
-                            "No clones yet.\nTap + to add your first clone."
-                        } else {
-                            "No clones match “$query”."
-                        },
-                        textAlign = TextAlign.Center,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            } else {
+            // v2.0.6 — blank home: no title, no feature card, no
+            // search, no empty-state text. Only the clone cards (the
+            // app's purpose — without them a clone could never be
+            // launched) and the + button. The status card above stays:
+            // it is the only place a launch/install result is shown.
+            if (visibleClones.isNotEmpty()) {
+                Spacer(Modifier.height(16.dp))
                 LazyVerticalGrid(
                     columns = GridCells.Fixed(2),
                     contentPadding = PaddingValues(bottom = 16.dp),
@@ -1403,7 +1171,7 @@ private fun CloneXHomeScreen(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                     modifier = Modifier.weight(1f)
                 ) {
-                    items(shown, key = { it.packageName + "#" + it.cloneIndex }) { entry ->
+                    items(visibleClones, key = { it.packageName + "#" + it.cloneIndex }) { entry ->
                         CloneCard(
                             entry = entry,
                             onClick = { onLaunchClone(entry) },
@@ -1414,41 +1182,6 @@ private fun CloneXHomeScreen(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun RowScope.FeatureItem(
-    emoji: String,
-    label: String,
-    tint: Color,
-    onClick: () -> Unit
-) {
-    Column(
-        modifier = Modifier
-            .weight(1f)
-            .clickable(onClick = onClick),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(52.dp)
-                .clip(CircleShape)
-                .background(tint),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(emoji, fontSize = 24.sp)
-        }
-        Spacer(Modifier.height(6.dp))
-        Text(
-            label,
-            fontSize = 12.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = Color(0xFF14141A),
-            textAlign = TextAlign.Center,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
     }
 }
 
@@ -1908,15 +1641,15 @@ private fun ImportAppRow(
                 bitmap = loaded,
                 contentDescription = label,
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
             )
         } else {
             val letter = label.firstOrNull()?.uppercaseChar()?.toString() ?: "?"
             Box(
                 modifier = Modifier
-                    .size(48.dp)
-                    .clip(RoundedCornerShape(12.dp))
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -1953,204 +1686,3 @@ private fun ImportAppRow(
 }
 
 // ---------------------------------------------------------------------------
-// Secret Zone screen (PIN-gated private clones)
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun SecretZoneScreen(
-    clones: List<CloneEntry>,
-    pin: String,
-    unlocked: Boolean,
-    onUnlockedChange: (Boolean) -> Unit,
-    settings: SettingsStore,
-    onBack: () -> Unit,
-    onLaunchClone: (CloneEntry) -> Unit,
-    onCloneOptions: (CloneEntry) -> Unit,
-    onAddAnotherClone: (CloneEntry) -> Unit
-) {
-    var pinInput by remember { mutableStateOf("") }
-    var pinError by remember { mutableStateOf<String?>(null) }
-    var changingPin by remember { mutableStateOf(false) }
-    val scope = rememberCoroutineScope()
-
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(horizontal = 16.dp, vertical = 12.dp)
-    ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack, contentPadding = PaddingValues(0.dp)) {
-                Text("‹", fontSize = 32.sp, color = Color(0xFF14141A))
-            }
-            Text(
-                "Secret Zone",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.ExtraBold,
-                color = Color(0xFF14141A)
-            )
-            Spacer(Modifier.weight(1f))
-            if (unlocked) {
-                TextButton(onClick = { onUnlockedChange(false) }) { Text("Lock") }
-            }
-        }
-
-        Spacer(Modifier.height(16.dp))
-
-        when {
-            pin.isEmpty() || changingPin -> {
-                Text(
-                    if (changingPin) "Set a new 4-digit PIN"
-                    else "Set a 4-digit PIN for the Secret Zone",
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 17.sp
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = pinInput,
-                    onValueChange = {
-                        if (it.length <= 4 && it.all { c -> c.isDigit() }) pinInput = it
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("4-digit PIN") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                pinError?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, color = Color(0xFFD32F2F))
-                }
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = {
-                        if (pinInput.length != 4) {
-                            pinError = "PIN must be 4 digits."
-                        } else {
-                            scope.launch {
-                                settings.setSecretPin(pinInput)
-                                pinInput = ""
-                                pinError = null
-                                changingPin = false
-                                onUnlockedChange(true)
-                            }
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2B5CFF)
-                    )
-                ) { Text("Set PIN", fontWeight = FontWeight.Bold) }
-                Text(
-                    "The PIN only keeps casual eyes out — it is not encryption. " +
-                        "Private clones are hidden from the home grid.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 12.dp)
-                )
-            }
-            !unlocked -> {
-                Text(
-                    "Enter your 4-digit PIN to open the Secret Zone",
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 17.sp
-                )
-                Spacer(Modifier.height(12.dp))
-                OutlinedTextField(
-                    value = pinInput,
-                    onValueChange = {
-                        if (it.length <= 4 && it.all { c -> c.isDigit() }) pinInput = it
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    placeholder = { Text("4-digit PIN") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(16.dp),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                    visualTransformation = PasswordVisualTransformation()
-                )
-                pinError?.let {
-                    Spacer(Modifier.height(8.dp))
-                    Text(it, color = Color(0xFFD32F2F))
-                }
-                Spacer(Modifier.height(12.dp))
-                Button(
-                    onClick = {
-                        if (pinInput == pin) {
-                            pinInput = ""
-                            pinError = null
-                            onUnlockedChange(true)
-                        } else {
-                            pinError = "Wrong PIN — try again."
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(52.dp),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = Color(0xFF2B5CFF)
-                    )
-                ) { Text("Unlock", fontWeight = FontWeight.Bold) }
-                Spacer(Modifier.height(12.dp))
-                TextButton(
-                    onClick = {
-                        pinInput = ""
-                        pinError = null
-                        changingPin = true
-                    },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Text("Forgot PIN? Set a new one") }
-            }
-            else -> {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        "${clones.size} private clone${if (clones.size == 1) "" else "s"}",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = {
-                        pinInput = ""
-                        pinError = null
-                        changingPin = true
-                    }) { Text("Change PIN") }
-                }
-                Spacer(Modifier.height(12.dp))
-                if (clones.isEmpty()) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .weight(1f),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Text(
-                            "No private clones yet.\nLong-press a clone on the home grid\nand choose “Move to Secret Zone”.",
-                            textAlign = TextAlign.Center,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                } else {
-                    LazyVerticalGrid(
-                        columns = GridCells.Fixed(2),
-                        contentPadding = PaddingValues(bottom = 16.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        items(clones, key = { it.packageName + "#" + it.cloneIndex }) { entry ->
-                            CloneCard(
-                                entry = entry,
-                                onClick = { onLaunchClone(entry) },
-                                onLongClick = { onCloneOptions(entry) },
-                                onAddAnother = { onAddAnotherClone(entry) }
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
