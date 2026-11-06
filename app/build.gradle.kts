@@ -65,13 +65,13 @@ android {
                 storePassword = signingProp("CLONEX_STORE_PASSWORD")
                 keyAlias = signingProp("CLONEX_KEY_ALIAS")
                 keyPassword = signingProp("CLONEX_KEY_PASSWORD")
-                // APK Signature Schemes enabled at build time.
-                // The final artifact is (re-)signed and verified with
-                // apksigner --v1/--v2/--v3/--v4 (see README "Release signing").
-                v1SigningEnabled = true
-                v2SigningEnabled = true
-                v3SigningEnabled = true
-                v4SigningEnabled = true
+                // APK Signature Schemes V1+V2+V3+V4 (AGP 9.5 ApkSigningConfig
+                // names — the old v1SigningEnabled etc. do not exist in
+                // AGP 9; run #7 failed on them as unresolved references).
+                enableV1Signing = true
+                enableV2Signing = true
+                enableV3Signing = true
+                enableV4Signing = true
             }
         }
     }
@@ -97,9 +97,9 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    kotlinOptions {
-        jvmTarget = "17"
-    }
+    // NOTE (AGP 9): android.kotlinOptions {} does NOT exist under AGP 9's
+    // built-in Kotlin (run #7 failed on it as an unresolved reference).
+    // JVM target is set in the top-level kotlin {} block below instead.
 
     buildFeatures {
         compose = true
@@ -115,6 +115,15 @@ android {
             include("arm64-v8a")
             isUniversalApk = false
         }
+    }
+}
+
+// JVM target for Kotlin compilation (AGP 9 built-in Kotlin: the
+// top-level kotlin {} extension is available without applying any
+// Kotlin plugin; kotlinOptions inside android {} is gone in AGP 9).
+kotlin {
+    compilerOptions {
+        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_17)
     }
 }
 
