@@ -1,13 +1,13 @@
 [versions]
-# Verified 2026-11-06:
-# - Kotlin 2.4.21 is the latest stable (8 Oct 2026); KSP 2.3.10 is the
-#   version Kotlin's own docs pair with Kotlin 2.4.21 (KSP2 is decoupled
-#   from the compiler version).
-# - AGP 9.1 requires Gradle 9.3.1 minimum; Gradle 9.7 satisfies it.
-# - Compose BOM 2026.08.00 = Compose 1.12 stable (Aug 2026), needs
-#   compileSdk 37 and AGP 9.1.2 minimum.
+# Verified 2026-11-06 against the official Maven metadata:
+# - AGP 9.5.0 is the latest stable (Google Maven metadata, 2026-11-06).
+#   AGP 9.1.2 DOES NOT EXIST (9.1.0 exists, no 9.1.1/9.1.2) — that was
+#   the run #3 failure. Gradle 9.8.2 satisfies AGP 9.5's minimum.
+# - Kotlin 2.4.21 is the latest stable (Gradle Plugin Portal metadata).
+# - Compose BOM 2026.08.00 exists (Google Maven metadata; latest 2026.09.00).
+# - KSP version below is still being verified against the plugin portal.
 kotlin = "2.4.21"
-agp = "9.1.2"
+agp = "9.5.0"
 composeBom = "2026.08.00"
 ksp = "2.3.10"
 room = "2.7.1"
