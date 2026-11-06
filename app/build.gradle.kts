@@ -2,7 +2,9 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
+    // NO kotlin.android here — AGP 9.0+ applies Kotlin itself (run #4
+    // failed when it was declared). The Compose compiler plugin stays:
+    // it is a separate Kotlin subplugin, not part of AGP.
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.ksp)
 }
