@@ -1,0 +1,18 @@
+# Gradle / Android
+.gradle/
+local.properties
+*.iml
+.idea/
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- SIGNING SECRETS — NEVER COMMIT ---
+# The release keystore and its passwords must never reach GitHub.
+# Keep clonex-release.jks + local.properties on the builder machine only,
+# back the keystore up offline. Losing it = no more updates for this app.
+*.jks
+*.keystore
+local.properties
