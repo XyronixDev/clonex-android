@@ -38,7 +38,9 @@ jobs:
   build-release:
     runs-on: ubuntu-latest
     # Fail fast instead of hanging for hours if a step stalls again.
-    timeout-minutes: 30
+    # 60 min so a genuinely slow (but progressing) engine build can
+    # finish; the opensdk step below has its own 15-min fail-fast cap.
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -133,6 +135,10 @@ jobs:
       # The opensdk build uses the repo's own gradlew (Gradle 7.0.2,
       # AGP 7.0.2) under JDK 11. setup-java exports JAVA_HOME_11_X64;
       # fall back to the tool-cache path if the variable is absent.
+      # --console=plain --info: run #29 stalled here for 30+ min with
+      # zero log output, so the next run must show every task and
+      # download. The 15-min step timeout fails fast instead of eating
+      # the whole job timeout.
       - name: Build opensdk AAR (JDK 11, AGP 7.0.2)
         timeout-minutes: 15
         run: |
@@ -145,8 +151,8 @@ jobs:
           export PATH="$JAVA_HOME/bin:$PATH"
           java -version
           cd multiapp
-                    chmod +x gradlew
-          ./gradlew :opensdk:assembleRelease --stacktrace
+          chmod +x gradlew
+          ./gradlew :opensdk:assembleRelease --console=plain --info --stacktrace
           ls -la opensdk/build/outputs/aar/
           test -f opensdk/build/outputs/aar/opensdk-release.aar
 
@@ -168,9 +174,9 @@ jobs:
           export JAVA_HOME="$JDK11"
           export PATH="$JAVA_HOME/bin:$PATH"
           cd multiapp
+          chmod +x gradlew
           sed -i 's/isMasterPkg = true/isMasterPkg = false/' build.gradle
           grep -n "isMasterPkg" build.gradle
-                    chmod +x gradlew
           ./gradlew :assist:assembleRelease --stacktrace
           ls -la assist/build/outputs/apk/release/ || true
 
