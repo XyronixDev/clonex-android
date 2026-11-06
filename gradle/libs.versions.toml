@@ -15,6 +15,13 @@ datastore = "1.1.7"
 activityCompose = "1.10.1"
 coreKtx = "1.16.0"
 lifecycleRuntimeCompose = "2.9.2"
+# v3.0: the NewBlackbox Bcore AAR's resources reference AppCompat themes
+# and ConstraintLayout (its styles.xml + activity_launcher.xml), but an
+# AAR does not carry its transitive deps — the app must declare them.
+# Versions match Bcore's own build (appcompat 1.2.0, constraintlayout
+# 2.2.0 from NewBlackbox's catalog).
+appcompat = "1.2.0"
+constraintlayout = "2.2.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -29,6 +36,8 @@ androidx-room-runtime = { group = "androidx.room", name = "room-runtime", versio
 androidx-room-ktx = { group = "androidx.room", name = "room-ktx", version.ref = "room" }
 androidx-room-compiler = { group = "androidx.room", name = "room-compiler", version.ref = "room" }
 androidx-datastore-preferences = { group = "androidx.datastore", name = "datastore-preferences", version.ref = "datastore" }
+androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version.ref = "appcompat" }
+androidx-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
