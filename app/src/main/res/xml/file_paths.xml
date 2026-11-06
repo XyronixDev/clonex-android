@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <!-- Assist APK is copied to cache/external-cache for the system installer. -->
+    <cache-path name="cache" path="." />
+    <external-cache-path name="external_cache" path="." />
+</paths>
