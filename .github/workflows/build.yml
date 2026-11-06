@@ -1,6 +1,14 @@
 name: CloneX — Build Release APK
 
-# Builds the CloneX release APK on every push to main and on manual runs.
+# v2.0: builds the MultiApp opensdk engine first, then the CloneX APK.
+#
+#  1. JDK 11: clone WaxMoon/MultiApp at the pinned commit, patch the
+#     master/assist package names to com.clonex.space /
+#     com.clonex.space.assist, build :opensdk:assembleRelease (AGP 7.0.2)
+#     and :assist:assembleRelease. The AAR goes to app/libs/, the assist
+#     APK to app/src/main/assets/assist.apk.
+#  2. JDK 21: Gradle 9.8.2 builds the CloneX release APK (AGP 9.5.0).
+#
 # The APK is delivered as a workflow artifact — download it from the
 # Actions tab. No zip is published from the chat.
 #
@@ -15,6 +23,9 @@ name: CloneX — Build Release APK
 # Without the secrets the build still succeeds and uploads an UNSIGNED
 # release APK (installable only after local signing). The keystore and
 # passwords are NEVER committed to the repo (see .gitignore).
+#
+# NOTE: this workflow file cannot be pushed through the GitHub API
+# (403 for workflow files) — it is uploaded through the browser UI.
 
 on:
   push:
@@ -32,7 +43,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 21
+      # JDK 11 is for the opensdk build (AGP 7.0.2 / Gradle 7.0.2).
+      - name: Set up JDK 11 (opensdk build)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "11"
+
+      # JDK 21 is for the CloneX build (AGP 9.5.0). This runs second, so
+      # JAVA_HOME ends up at 21 for the CloneX steps below; the opensdk
+      # steps override JAVA_HOME inline.
+      - name: Set up JDK 21 (CloneX build)
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -58,7 +79,9 @@ jobs:
       # $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager, so resolve it
       # by full path — and install cmdline-tools first if it is absent.
       # ANDROID_HOME is exported to later steps (build + apksigner).
-      - name: Install Android 17 SDK (API 37.0)
+      # v2.0: also installs API 33 + build-tools 31.0.0, which the
+      # opensdk build needs (compileSdk 33, buildTools 31.0.0).
+      - name: Install Android SDKs (API 37.0 + API 33)
         timeout-minutes: 15
         run: |
           export ANDROID_HOME="${ANDROID_HOME:-/usr/lib/android-sdk}"
@@ -81,10 +104,88 @@ jobs:
           echo "sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
           "$SDKMANAGER" --channel=3 "platforms;android-37.0" "build-tools;37.0.0"
+          "$SDKMANAGER" "platforms;android-33" "build-tools;31.0.0"
           if [ -d "$ANDROID_HOME/platforms/android-37.0" ] && [ ! -e "$ANDROID_HOME/platforms/android-37" ]; then
             ln -s android-37.0 "$ANDROID_HOME/platforms/android-37"
           fi
           ls "$ANDROID_HOME/platforms/"
+
+      # --- v2.0 engine: MultiApp opensdk ---------------------------------
+      # Clone at the pinned commit (HEAD of WaxMoon/MultiApp main, verified
+      # 2026-11-06) with submodules (opensdk), then patch the package
+      # names baked into the AAR's BuildConfig: HackApplication checks
+      # BuildConfig.MASTER_PACKAGE against the host app's package, so the
+      # AAR must be built as com.clonex.space / com.clonex.space.assist.
+      - name: Clone MultiApp + patch package names
+        run: |
+          git clone --recurse-submodules https://github.com/WaxMoon/MultiApp.git multiapp
+          cd multiapp
+          git checkout 3de55af64ec925de390cbf30bb82f279a51945e0
+          git submodule update --init --recursive
+          sed -i 's/org\.waxmoon\.github64/com.clonex.space/g; s/org\.waxmoon\.github32/com.clonex.space.assist/g' build.gradle
+          echo "--- patched ext block ---"
+          grep -n "masterPkg\|assistPkg" build.gradle
+          # jcenter() is shut down — drop it so dependency resolution does
+          # not stall on a dead repo.
+          sed -i '/jcenter()/d' settings.gradle
+          git diff --stat
+
+      # The opensdk build uses the repo's own gradlew (Gradle 7.0.2,
+      # AGP 7.0.2) under JDK 11. setup-java exports JAVA_HOME_11_X64;
+      # fall back to the tool-cache path if the variable is absent.
+      - name: Build opensdk AAR (JDK 11, AGP 7.0.2)
+        timeout-minutes: 15
+        run: |
+          JDK11="${JAVA_HOME_11_X64:-}"
+          if [ -z "$JDK11" ]; then
+            JDK11=$(ls -d "$RUNNER_TOOL_CACHE"/Java_Temurin-Hotspot_jdk/11*/x64 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$JDK11" ]; then echo "JDK 11 not found"; exit 1; fi
+          export JAVA_HOME="$JDK11"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          java -version
+          cd multiapp
+          ./gradlew :opensdk:assembleRelease --stacktrace
+          ls -la opensdk/build/outputs/aar/
+          test -f opensdk/build/outputs/aar/opensdk-release.aar
+
+      # Best effort only: if the assist APK fails to build, CloneX still
+      # ships — the app prompts for the assist package but cannot bundle
+      # it, and 32-bit clones will not launch until it is installed.
+      # The assist APK must be built with isMasterPkg=false (assist
+      # manifest + assist BuildConfig) — the opensdk AAR above was built
+      # with isMasterPkg=true, so flip the flag here before building.
+      - name: Build assist APK (JDK 11, best effort)
+        timeout-minutes: 10
+        continue-on-error: true
+        run: |
+          JDK11="${JAVA_HOME_11_X64:-}"
+          if [ -z "$JDK11" ]; then
+            JDK11=$(ls -d "$RUNNER_TOOL_CACHE"/Java_Temurin-Hotspot_jdk/11*/x64 2>/dev/null | head -n 1)
+          fi
+          if [ -z "$JDK11" ]; then echo "JDK 11 not found"; exit 1; fi
+          export JAVA_HOME="$JDK11"
+          export PATH="$JAVA_HOME/bin:$PATH"
+          cd multiapp
+          sed -i 's/isMasterPkg = true/isMasterPkg = false/' build.gradle
+          grep -n "isMasterPkg" build.gradle
+          ./gradlew :assist:assembleRelease --stacktrace
+          ls -la assist/build/outputs/apk/release/ || true
+
+      - name: Copy engine artifacts into CloneX
+        run: |
+          mkdir -p app/libs app/src/main/assets
+          cp multiapp/opensdk/build/outputs/aar/opensdk-release.aar app/libs/
+          echo "--- app/libs ---"
+          ls -la app/libs/
+          ASSIST_APK=$(find multiapp/assist/build/outputs/apk/release -name "*.apk" ! -name "*unaligned*" 2>/dev/null | head -n 1)
+          if [ -n "$ASSIST_APK" ]; then
+            cp "$ASSIST_APK" app/src/main/assets/assist.apk
+            echo "Assist APK bundled: $ASSIST_APK"
+          else
+            echo "WARNING: assist APK not built — 32-bit clones will prompt without a bundled package."
+          fi
+          ls -la app/src/main/assets/ || true
 
       - name: Prepare signing (only if keystore secret is set)
         # NOTE: GitHub Actions does NOT allow the `secrets` context inside
