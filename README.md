@@ -1,12 +1,12 @@
-# CloneX — Virtual Space / App Cloner (v2.0)
+# CloneX — Virtual Space / App Cloner (v3.0)
 
 **App:** CloneX · **Package:** `com.clonex.space` · **Repo:** `clonex-android`
 
 Clone multiple apps, keep each clone in its own space, run them with
-separate logins — Parallel Space / Dual App style. v2.0 ships the **real
-virtual engine**: the MultiApp opensdk (HackApi) — a true sandbox
-container with native hooks, split-APK install, and a 32-bit assist
-package. Light-mode UI styled like the MultiApp screenshots.
+separate logins — Parallel Space / Dual App style. v3.0 ships the
+**real virtual engine**: NewBlackbox (BlackBoxCore) — a true sandbox
+container with native hooks, split-APK install (Instagram, Facebook,
+WhatsApp), and a single boolean launch. Light-mode launcher-style UI.
 
 > **Delivery:** no zip is published. Push to GitHub → GitHub Actions
 > builds the release APK (including the engine AAR) → download it from
@@ -14,52 +14,44 @@ package. Light-mode UI styled like the MultiApp screenshots.
 
 ## Roman Urdu — mukhtasar
 
-v2.0 mein asli engine hai: app clone hoti hai aur virtual space ke andar
+v3.0 mein naya engine hai: NewBlackbox. v2.0 ka MultiApp opensdk
+engine har clone launch reject kar deta tha (engine code 102) — is
+liye engine badla gaya. App clone hoti hai aur virtual space ke andar
 **run bhi hoti hai** — tap karne par clone launch hoti hai. Split APK
 (WhatsApp, Facebook, Instagram) folder se install hoti hai. Banking
 apps aur REQUIRE_SECURE_ENV wali apps ismein kabhi nahi chalengi.
 100% guarantee koi virtual-space app nahi deti, Parallel Space bhi nahi.
 
-## What v2.0 does (real)
+## What v3.0 does (real)
 
-- Light-mode Compose UI like the MultiApp screenshots: title top-left,
-  3-dot menu, white feature card (Secret Zone / Storage Manager /
-  Device Info / Find Help), clone grid with real icons, blue + FAB.
+- Light-mode Compose UI: blank home (clone grid + blue + FAB), launcher-
+  style tiles (real icon + name, no card), Import Apps screen (HOT
+  section, A-Z list with a right-side alphabet index).
 - **Already PRO** — every feature unlocked from the start: up to 10
-  clones per app, Secret Zone, Storage Manager, Google Suite. No upsell,
-  no gating, no VIP anything.
-- **Real virtual engine** (MultiApp opensdk, HackApi): clones actually
+  clones per app, Google Suite. No upsell, no gating, no VIP anything.
+- **Real virtual engine** (NewBlackbox, BlackBoxCore): clones actually
   install into the virtual space and launch on tap.
 - **Add App** — pick any installed app, save it as Clone 1 / Clone 2…
   (each clone = its own virtual user space).
 - **Import APK** — system file picker (SAF): a single APK file, or a
   **folder of split APKs** (WhatsApp / Facebook / Instagram from Play).
-- **Import Apps screen** — HOT section (Instagram, YouTube, Telegram,
-  WhatsApp, Facebook), A-Z list with a right-side alphabet index.
-- **Secret Zone** — PIN-gated private clones, hidden from the home grid.
-- **Storage Manager** — per-clone Clear cache / Clear data through the
-  engine (deletePackageCache / deletePackageData).
-- **Device Info** — engine runtime properties + host device details.
-- **Install Google Suite** — the Play Store build bundled with the
-  engine (`com.waxmoon.ma.gp`) + host GMS / GSF / vending when present.
-- **Device Info** — engine runtime properties + host device details.
-- Long-press a clone: Launch / Secret Zone / Clear data / Clear cache /
-  Kill app / Remove.
+- **Storage** — per-clone Clear cache / Clear data through the engine.
+- **Device Info** — engine status + host device details + last crash.
+- **Install Google Suite** — the engine's own GMS install (gms + gsf).
+  The Play Store app itself does not work inside the space.
+- Long-press a clone: Launch / Add another clone / Clear data /
+  Clear cache / Kill app / Remove / Remove from library only.
 - Clone library in **Room** (survives restarts), settings in
-  **DataStore** (max clones, notifications, Secret Zone PIN).
+  **DataStore** (max clones, notifications).
 - Release build: R8 minify + shrinkResources, **arm64-only** (small size).
 
 ## Honest limits
 
-- The engine is frozen since 2023 (Android 14 max in its changelog) —
-  it may not work on newer Android versions. Verify on the phone.
 - Banking / payment / UPI apps and apps declaring
   `REQUIRE_SECURE_ENV` are out of scope on purpose — they detect virtual
   environments and refuse or ban. No bypass will ever be shipped.
-- 32-bit-only apps need the assist package (`com.clonex.space.assist`),
-  installed through the system installer when CloneX asks.
-- Play Store / GMS inside the sandbox is fragile; the bundled Play
-  Store build is a modded APK, not the stock Play Store.
+- Play Store / GMS inside the sandbox is fragile; the Play Store app
+  itself crashes inside NewBlackbox, so the Suite is GMS-only.
 - No virtual-space app runs 100% of apps — social / messaging apps
   (WhatsApp, Facebook, Instagram, Telegram) are the realistic target.
 
@@ -71,18 +63,18 @@ apps aur REQUIRE_SECURE_ENV wali apps ismein kabhi nahi chalengi.
 | Jetpack Compose BOM | 2026.08.00 (Compose 1.12) |
 | AGP | 9.5.0 (verified via Google Maven metadata 2026-11-06; AGP 9.1.2 does not exist) |
 | Gradle | 9.8.2 (locked spec said 9.7 — that version was never released) |
-| JDK | 21 (CloneX build); 11 (opensdk AAR build in CI) |
-| compileSdk / targetSdk / minSdk | 37 / **26** / 26 (targetSdk 26 is an engine requirement — sideload-only) |
-| Engine | MultiApp opensdk (HackApi), AGPL-3.0 — AAR built in CI from pinned commit `3de55af6` |
+| JDK | 21 (CloneX build); 21 (Bcore AAR build in CI, via NewBlackbox's own wrapper) |
+| compileSdk / targetSdk / minSdk | 37 / **28** / 26 (targetSdk 28 is an engine requirement — sideload-only) |
+| Engine | NewBlackbox (BlackBoxCore), Apache-2.0 — AAR built in CI from pinned commit `89b59836` + MaxCloner split patch |
 | Room / DataStore / KSP | 2.7.1 / 1.1.7 / 2.3.10 |
 
 ## Build via GitHub Actions (the delivery route)
 
 1. Push `main`. The workflow `.github/workflows/build.yml` runs:
-   JDK 11 → clone WaxMoon/MultiApp at the pinned commit, patch the
-   master/assist package names, build `:opensdk:assembleRelease` (AGP
-   7.0.2) + `:assist:assembleRelease` → copy the AAR to `app/libs/` and
-   the assist APK to `app/src/main/assets/` → JDK 21 → Gradle 9.8.2 →
+   JDK 21 → clone ALEX5402/NewBlackbox at the pinned commit, apply
+   the split-APK patch (`tools/patch-bcore-split.py`), build
+   `:Bcore:assembleRelease` (Gradle 8.14.5, NDK 29.0.13846066,
+   compileSdk 35) → copy the AAR to `app/libs/` → Gradle 9.8.2 →
    `assembleRelease` → `apksigner verify`.
 2. Download the APK from the run's artifacts (`CloneX-release-apk`).
 
@@ -155,42 +147,46 @@ Without the secrets the workflow still builds and uploads an
 ```
 settings.gradle.kts / build.gradle.kts / gradle/libs.versions.toml
 app/
-  build.gradle.kts            # SDKs, R8, arm64 split, signing config, opensdk AAR
-  src/main/AndroidManifest.xml  # .CloneXApplication + FileProvider (assist APK)
-  src/main/res/xml/file_paths.xml
+  build.gradle.kts            # SDKs, R8, arm64 split, signing config, Bcore AAR
+  src/main/AndroidManifest.xml  # .CloneXApplication (plain Application)
   src/main/java/com/clonex/space/
-    CloneXApplication.kt      # extends HackApplication (engine init)
+    CloneXApplication.kt      # plain Application (BlackBoxCore init)
     MainActivity.kt           # single activity, light Compose UI (home /
-                              # Import Apps / Secret Zone), real icons
+                              # Import Apps), real icons
     ui/Theme.kt               # light Material 3 theme
-    data/                     # Room: CloneEntry (v2: isPrivate), CloneDao,
-                              # CloneDatabase (v2 + migration); DataStore:
-                              # SettingsStore (max clones, Secret Zone PIN)
-    engine/                   # VirtualEngine, RealVirtualEngine (HackApi),
+    data/                     # Room: CloneEntry, CloneDao, CloneDatabase;
+                              # DataStore: SettingsStore (max clones)
+    engine/                   # VirtualEngine, RealVirtualEngine (BlackBoxCore),
                               # StubVirtualEngine (kept, unused), ENGINE_NOTES.md
-.github/workflows/build.yml  # Actions: opensdk AAR + assist APK, then CloneX APK
+tools/
+  patch-bcore-split.py        # applies the MaxCloner split-APK patch to a
+  bcore-split-patch/          #   NewBlackbox checkout (4 patched Java files)
+.github/workflows/build.yml  # Actions: Bcore AAR (patched), then CloneX APK
 ```
 
-## Open-source attribution (AGPL-3.0)
+## Open-source attribution (Apache-2.0)
 
-CloneX v2.0 uses the **MultiApp opensdk** virtual engine by WaxMoon:
+CloneX v3.0 uses the **NewBlackbox** virtual engine by ALEX5402:
 
-- MultiApp: https://github.com/WaxMoon/MultiApp (pinned commit
-  `3de55af64ec925de390cbf30bb82f279a51945e0`)
-- opensdk: https://github.com/WaxMoon/opensdk (submodule `eaab164`)
-- Licence: **GNU Affero General Public License v3.0 (AGPL-3.0)**
+- NewBlackbox: https://github.com/ALEX5402/NewBlackbox (pinned commit
+  `89b59836c66f173756a4ae258cf379a957649820`)
+- Licence: **Apache License 2.0**
 
-The opensdk is used unmodified except for the host/assist package
-names (`com.clonex.space` / `com.clonex.space.assist`) and CloneX
-branding. No MultiApp artwork is copied (feature icons are generic
-shapes/emoji). CloneX source code is published at
-https://github.com/XyronixDev/clonex-android under the same licence.
+Split-APK support comes from the MaxCloner fork's patch:
+
+- MaxCloner: https://github.com/ashiquesheriefofficial-max/MaxCloner
+- Licence: **Apache License 2.0**
+
+CloneX source code is published at
+https://github.com/XyronixDev/clonex-android. No MultiApp artwork is
+copied (feature icons are generic shapes). The MultiApp opensdk
+(AGPL-3.0) was used in v2.0–v2.0.10 and is no longer part of CloneX.
 
 ## Next step (phone testing)
 
-1. Install v2.0 over v1.1.0 (same keystore) and check the engine starts
-   (no crash on launch; logcat: `CloneXApplication` / `HackApplication`).
-2. Clone WhatsApp (split APK) → launch → log in with a second number.
-3. Clone Facebook, Instagram, Telegram, Chrome (WebView).
-4. One 32-bit-only app → assist package prompt → install → launch.
-5. One banking app → expect a clean refusal, not a host crash.
+1. Install v3.0.0 fresh (old opensdk clones are stale — Remove + re-add
+   them) and check the engine starts (no crash on launch).
+2. Clone Instagram (split APK) → tap the clone → it must OPEN (this is
+   the v3.0.0 test gate: v2.0.10 never opened a clone).
+3. Clone WhatsApp, Facebook, Telegram, Chrome (WebView).
+4. One banking app → expect a clean refusal, not a host crash.
