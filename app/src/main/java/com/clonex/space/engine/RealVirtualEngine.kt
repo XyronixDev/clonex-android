@@ -74,7 +74,10 @@ class RealVirtualEngine(
         val INTERNAL_PACKAGES = setOf(
             "com.waxmoon.ma.gp",        // bundled Play Store (Google Suite)
             "com.clonex.space.assist", // 32-bit assist package
-            "com.clonex.space"         // CloneX itself
+            "com.clonex.space",         // CloneX itself
+            "com.google.android.gms",   // Google Services (Google Suite support)
+            "com.google.android.gsf",   // Google Services Framework
+            "com.android.vending"       // Play Store (host copy)
         )
     }
 
@@ -169,11 +172,36 @@ class RealVirtualEngine(
         withContext(Dispatchers.IO) {
             try {
                 engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
-                val intent = HackApi.getLaunchIntentForPackage(packageName, userId)
-                    ?: hostLaunchIntent(packageName)
+                // v2.0.2 — launch exactly like the MultiApp demo
+                // (AppListActivity.startApp). v2.0.0/v2.0.1 used the
+                // engine's getLaunchIntentForPackage FIRST and treated any
+                // startActivity return >= 0 as success — on the user's
+                // phone that reported "Launching Instagram…" while the
+                // clone never opened (return 1 = returned to caller,
+                // i.e. NOT started). The demo instead:
+                //  1. takes the HOST PackageManager's launch intent and
+                //     adds FLAG_ACTIVITY_RESET_TASK_IF_NEEDED;
+                //  2. falls back to the engine's getLaunchIntentForPackage
+                //     only for clones the host never had (APK imports);
+                //  3. treats ONLY 0 (START_SUCCESS) as launched — any
+                //     other code is reported, never shown as "Launching…".
+                val hostIntent = try {
+                    context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
+                        addFlags(
+                            Intent.FLAG_ACTIVITY_NEW_TASK or
+                                Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED
+                        )
+                    }
+                } catch (e: Exception) {
+                    null
+                }
+                val intent = hostIntent
+                    ?: HackApi.getLaunchIntentForPackage(packageName, userId)?.apply {
+                        addFlags(Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
+                    }
                 if (intent != null) {
                     val ret = HackApi.startActivity(intent, userId)
-                    return@withContext if (ret >= START_SUCCESS) {
+                    return@withContext if (ret == START_SUCCESS) {
                         EngineResult.Ok("Launching ${hostLabel(packageName)}…")
                     } else {
                         EngineResult.Failed("Launch failed (engine code $ret).")
@@ -380,17 +408,6 @@ class RealVirtualEngine(
             info.loadLabel(pm)?.toString()?.takeIf { it.isNotBlank() } ?: packageName
         } catch (e: Exception) {
             packageName
-        }
-    }
-
-    /** Host-side launch intent for a package installed on the phone. */
-    private fun hostLaunchIntent(packageName: String): Intent? {
-        return try {
-            context.packageManager.getLaunchIntentForPackage(packageName)?.apply {
-                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            }
-        } catch (e: Exception) {
-            null
         }
     }
 
