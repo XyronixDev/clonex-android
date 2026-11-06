@@ -106,7 +106,7 @@ import java.util.concurrent.ConcurrentHashMap
  *  - Home (v2.0.6): blank — only the clone grid and the blue circular
  *    + FAB bottom-right. Everything else lives in the + menu.
  *  - Import Apps: its own screen — back arrow, search, "Import from file
- *    (Beta)", HOT section, A-Z list with a right-side alphabet index.
+ *    HOT section, A-Z list with a right-side alphabet index.
  *  - Long-press a clone: Launch / Clear data / Clear cache /
  *    Kill app / Remove.
  *  - Permissions (v2.0.9): declared in the manifest, NEVER asked on
@@ -480,7 +480,7 @@ class MainActivity : ComponentActivity() {
             val sb = StringBuilder()
             sb.appendLine("Device: ${Build.MANUFACTURER} ${Build.MODEL}")
             sb.appendLine("Android: ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})")
-            sb.appendLine("CloneX: 2.0.9 (targetSdk 26, sideload-only)")
+            sb.appendLine("CloneX: 2.0.10 (targetSdk 26, sideload-only)")
             sb.appendLine(
                 "Engine: MultiApp opensdk (HackApi) — ${CloneXApplication.engineStatus()}"
             )
@@ -938,7 +938,7 @@ private fun CloneXApp(
             onDeviceInfo = onDeviceInfo,
             onSettings = onSettings,
             onPickApkFile = {
-                apkFilePicker.launch(arrayOf("application/vnd.android.package-archive"))
+                apkFilePicker.launch(arrayOf("*/*"))
             },
             onPickApkFolder = { apkDirPicker.launch(null) },
             onAddApp = { pkg, label ->
@@ -986,6 +986,10 @@ private fun CloneXApp(
                     CloneOptionButton("Launch") {
                         cloneOptions = null
                         launchCloneNow(entry)
+                    }
+                    CloneOptionButton("Add another clone") {
+                        cloneOptions = null
+                        onAddAnotherClone(entry)
                     }
                     CloneOptionButton("Clear data") {
                         cloneOptions = null
@@ -1246,11 +1250,13 @@ private fun CloneXHomeScreen(
                     modifier = Modifier.weight(1f)
                 ) {
                     items(visibleClones, key = { it.packageName + "#" + it.cloneIndex }) { entry ->
-                        CloneCard(
+                        CloneTile(
                             entry = entry,
+                            // v2.0.10 — the number rides on the NAME, only
+                            // when this app has more than one clone.
+                            cloneCount = visibleClones.count { it.packageName == entry.packageName },
                             onClick = { onLaunchClone(entry) },
-                            onLongClick = { onCloneOptions(entry) },
-                            onAddAnother = { onAddAnotherClone(entry) }
+                            onLongClick = { onCloneOptions(entry) }
                         )
                     }
                 }
@@ -1295,92 +1301,40 @@ private fun CloneAppIcon(entry: CloneEntry, size: androidx.compose.ui.unit.Dp) {
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun CloneCard(
+private fun CloneTile(
     entry: CloneEntry,
+    cloneCount: Int,
     onClick: () -> Unit,
-    onLongClick: () -> Unit,
-    onAddAnother: () -> Unit
+    onLongClick: () -> Unit
 ) {
-    Card(
-        modifier = Modifier.combinedClickable(
-            onClick = onClick,
-            onLongClick = onLongClick
-        ),
-        colors = CardDefaults.cardColors(containerColor = Color.White),
-        shape = RoundedCornerShape(18.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    // v2.0.10 — launcher-style tile, NOT a card: no white card, no
+    // number badge, no "+" button, no "Clone N" pill, no "Tap to
+    // launch". Just the real app icon and its name, like a launcher.
+    // When one app has more than one clone, the number rides on the
+    // name ("Instagram 1", "Instagram 2"); a single clone shows the
+    // plain name. Long-press opens the options (Launch / Add another
+    // clone / Clear data / Clear cache / Kill / Remove).
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
+            .padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Corner userSpace badge.
-                Box(
-                    modifier = Modifier
-                        .size(26.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(Color(0xFF2B5CFF)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        "${entry.cloneIndex + 1}",
-                        color = Color.White,
-                        fontSize = 13.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                TextButton(
-                    onClick = onAddAnother,
-                    contentPadding = PaddingValues(0.dp),
-                    modifier = Modifier.size(28.dp)
-                ) {
-                    Text(
-                        "+",
-                        color = Color(0xFF2B5CFF),
-                        fontSize = 22.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-            }
-            Spacer(Modifier.height(4.dp))
-            CloneAppIcon(entry = entry, size = 56.dp)
-            Spacer(Modifier.height(10.dp))
-            Text(
-                entry.label,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = Color(0xFF14141A)
-            )
-            Spacer(Modifier.height(6.dp))
-            Box(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(Color(0xFFE8F0FF))
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    "Clone ${entry.cloneIndex + 1}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF2B5CFF),
-                    fontWeight = FontWeight.SemiBold
-                )
-            }
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Tap to launch",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+        CloneAppIcon(entry = entry, size = 64.dp)
+        Spacer(Modifier.height(8.dp))
+        Text(
+            if (cloneCount > 1) "${entry.label} ${entry.cloneIndex + 1}" else entry.label,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.bodyMedium,
+            fontWeight = FontWeight.SemiBold,
+            color = Color(0xFF14141A),
+            textAlign = TextAlign.Center
+        )
     }
 }
 
@@ -1515,7 +1469,7 @@ private fun ImportAppsScreen(
 
         Spacer(Modifier.height(12.dp))
 
-        // Import from file (Beta)
+        // Import from file
         Card(
             colors = CardDefaults.cardColors(containerColor = Color.White),
             shape = RoundedCornerShape(16.dp),
@@ -1546,14 +1500,6 @@ private fun ImportAppsScreen(
                     color = Color(0xFF14141A)
                 )
                 Spacer(Modifier.width(8.dp))
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .background(Color(0xFFF1EFF7))
-                        .padding(horizontal = 8.dp, vertical = 3.dp)
-                ) {
-                    Text("Beta", fontSize = 12.sp, color = Color(0xFF6B6B70))
-                }
             }
         }
 
@@ -1670,7 +1616,7 @@ private fun ImportAppsScreen(
     if (showImportChoice) {
         AlertDialog(
             onDismissRequest = { showImportChoice = false },
-            title = { Text("Import from file (Beta)") },
+            title = { Text("Import from file") },
             text = {
                 Text(
                     "Pick a single APK file, or a folder containing all split APKs " +
