@@ -1,6 +1,7 @@
 package com.clonex.space.engine
 
 import android.content.Context
+import com.clonex.space.CloneXApplication
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
@@ -64,13 +65,32 @@ class RealVirtualEngine(
         const val INSTALL_FAILED_INVALID_URI = -3
         const val DELETE_SUCCEEDED = 1
         const val START_SUCCESS = 0
+
+        /**
+         * Packages that belong to the engine itself — never shown as
+         * clone cards (v2.0.1: the bundled Play Store must not appear
+         * as a clone the user never added).
+         */
+        val INTERNAL_PACKAGES = setOf(
+            "com.waxmoon.ma.gp",        // bundled Play Store (Google Suite)
+            "com.clonex.space.assist", // 32-bit assist package
+            "com.clonex.space"         // CloneX itself
+        )
     }
+
+    /** Non-null reason when the engine failed to start (degraded mode). */
+    private fun engineDown(): String? = CloneXApplication.engineInitError
+
+    /** v2.0.1: the startup sync must not trust an empty list while down. */
+    override suspend fun engineReady(): Boolean =
+        CloneXApplication.engineInitError == null
 
     // --- install ------------------------------------------------------------
 
     override suspend fun installPackageAsUser(apkPath: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val parsed = parseApk(apkPath)
                     ?: return@withContext EngineResult.Failed(
                         "Could not read this APK file."
@@ -91,6 +111,7 @@ class RealVirtualEngine(
     override suspend fun installFromHost(packageName: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val label = hostLabel(packageName)
                 val ret = HackApi.installPackageFromHost(packageName, userId, false)
                 val result = installResult(ret, label, userId)
@@ -107,6 +128,7 @@ class RealVirtualEngine(
     override suspend fun installApkFiles(apkPathOrDir: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val file = File(apkPathOrDir)
                 // For a split-APK directory every APK shares one package
                 // name — parse the first readable APK for the library entry.
@@ -146,6 +168,7 @@ class RealVirtualEngine(
     override suspend fun launchApp(packageName: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val intent = HackApi.getLaunchIntentForPackage(packageName, userId)
                     ?: hostLaunchIntent(packageName)
                 if (intent != null) {
@@ -174,6 +197,7 @@ class RealVirtualEngine(
     override suspend fun uninstallPackage(packageName: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val ret = HackApi.uninstallPackage(packageName, userId)
                 if (ret == DELETE_SUCCEEDED) {
                     EngineResult.Ok("Removed from the virtual space.")
@@ -191,6 +215,7 @@ class RealVirtualEngine(
     override suspend fun clearCloneData(packageName: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val ret = HackApi.deletePackageData(packageName, userId)
                 if (ret == DELETE_SUCCEEDED) {
                     EngineResult.Ok("Clone data cleared.")
@@ -206,6 +231,7 @@ class RealVirtualEngine(
     override suspend fun clearCloneCache(packageName: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 val ret = HackApi.deletePackageCache(packageName, userId)
                 if (ret == DELETE_SUCCEEDED) {
                     EngineResult.Ok("Clone cache cleared.")
@@ -221,6 +247,7 @@ class RealVirtualEngine(
     override suspend fun killClone(packageName: String, userId: Int): EngineResult =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext EngineResult.Failed("Virtual engine failed to start: $it") }
                 HackApi.killApplication(userId, packageName, "CloneX user request")
                 EngineResult.Ok("Clone stopped.")
             } catch (e: Exception) {
@@ -234,6 +261,7 @@ class RealVirtualEngine(
     override suspend fun availableUser(packageName: String): Int =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext 0 }
                 HackApi.getAvailableUser(packageName)
             } catch (e: Exception) {
                 Log.w(TAG, "getAvailableUser failed, using 0", e)
@@ -244,6 +272,7 @@ class RealVirtualEngine(
     override suspend fun needsAssist(packageName: String, userId: Int): Boolean =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext false }
                 val settings = HackApi.getPackageSetting(packageName, userId, 0)
                 settings?.getBoolean(CmdConstants.PKG_SET_REQUEST_ASSISTANT, false) ?: false
             } catch (e: Exception) {
@@ -255,6 +284,7 @@ class RealVirtualEngine(
     override suspend fun runtimeProperties(): Map<String, Any?> =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext emptyMap() }
                 HackApi.getRuntimeProperties()?.mapValues { it.value } ?: emptyMap()
             } catch (e: Exception) {
                 Log.w(TAG, "getRuntimeProperties failed", e)
@@ -265,6 +295,7 @@ class RealVirtualEngine(
     override suspend fun listClones(): List<CloneEntry> =
         withContext(Dispatchers.IO) {
             try {
+                engineDown()?.let { return@withContext emptyList() }
                 val spaces = try {
                     HackApi.getAvailableUserSpace()?.toList() ?: emptyList()
                 } catch (e: Exception) {
@@ -281,6 +312,7 @@ class RealVirtualEngine(
                         null
                     } ?: continue
                     for (pkg in pkgs) {
+                        if (pkg in INTERNAL_PACKAGES) continue
                         entries += CloneEntry(
                             packageName = pkg,
                             label = hostLabel(pkg),
