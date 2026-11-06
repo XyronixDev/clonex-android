@@ -34,6 +34,7 @@ class SettingsStore(private val context: Context) {
         private val NOTIFICATIONS = booleanPreferencesKey("notifications_enabled")
         private val SECRET_PIN = stringPreferencesKey("secret_zone_pin")
         private val GOOGLE_SUITE = booleanPreferencesKey("google_suite_installed")
+        private val PERMISSIONS_REQUESTED = booleanPreferencesKey("permissions_requested")
 
         const val DEFAULT_MAX_CLONES = 10
         const val MAX_CLONES_CAP = 10
@@ -59,6 +60,11 @@ class SettingsStore(private val context: Context) {
         prefs[GOOGLE_SUITE] ?: false
     }
 
+    /** True once the first-launch permission request has been shown. */
+    val permissionsRequested: Flow<Boolean> = context.settingsDataStore.data.map { prefs ->
+        prefs[PERMISSIONS_REQUESTED] ?: false
+    }
+
     suspend fun setMaxClones(value: Int) {
         context.settingsDataStore.edit { prefs ->
             prefs[MAX_CLONES] = value.coerceIn(1, MAX_CLONES_CAP)
@@ -80,6 +86,12 @@ class SettingsStore(private val context: Context) {
     suspend fun setGoogleSuiteInstalled(installed: Boolean) {
         context.settingsDataStore.edit { prefs ->
             prefs[GOOGLE_SUITE] = installed
+        }
+    }
+
+    suspend fun setPermissionsRequested(requested: Boolean) {
+        context.settingsDataStore.edit { prefs ->
+            prefs[PERMISSIONS_REQUESTED] = requested
         }
     }
 }
