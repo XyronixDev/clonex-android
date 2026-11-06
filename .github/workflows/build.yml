@@ -55,13 +55,20 @@ jobs:
           ls "$ANDROID_HOME/platforms/"
 
       - name: Prepare signing (only if keystore secret is set)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        # NOTE: GitHub Actions does NOT allow the `secrets` context inside
+        # an `if:` expression (validation error: "Unrecognized named-value:
+        # 'secrets'"). So this step always runs and checks inside bash:
+        # empty secret = skip signing, build stays unsigned.
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           STORE_PASSWORD: ${{ secrets.CLONEX_STORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.CLONEX_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.CLONEX_KEY_PASSWORD }}
         run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No keystore secret set — building unsigned release APK."
+            exit 0
+          fi
           echo "$KEYSTORE_B64" | base64 -d > "$GITHUB_WORKSPACE/clonex-release.jks"
           cat > local.properties <<EOF
           CLONEX_STORE_FILE=$GITHUB_WORKSPACE/clonex-release.jks
