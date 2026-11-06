@@ -903,6 +903,20 @@ private fun CloneXApp(
     }
     val onDeviceInfo: () -> Unit = { showDeviceInfo = true }
     val onSettings: () -> Unit = { showSettings = true }
+    // v2.0.10 fix — Run #72 failed: the long-press dialog called
+    // onAddAnotherClone, but it only existed as CloneXHomeScreen's
+    // parameter. One shared lambda here, used by the home screen AND
+    // the long-press "Add another clone" option.
+    val onAddAnotherClone: (CloneEntry) -> Unit = { entry ->
+        scope.launch {
+            val outcome = activity.addInstalledApp(
+                entry.packageName, entry.label, engine, dao, maxClones
+            )
+            status = outcome.message
+            assistRequest = outcome.assist
+            if (outcome.success) screen = Screen.HOME
+        }
+    }
 
     when (screen) {
         Screen.HOME -> CloneXHomeScreen(
@@ -917,16 +931,6 @@ private fun CloneXApp(
             onSettings = onSettings,
             onLaunchClone = launchCloneNow,
             onCloneOptions = { cloneOptions = it },
-            onAddAnotherClone = { entry ->
-                scope.launch {
-                    val outcome = activity.addInstalledApp(
-                        entry.packageName, entry.label, engine, dao, maxClones
-                    )
-                    status = outcome.message
-                    assistRequest = outcome.assist
-                        if (outcome.success) screen = Screen.HOME
-                }
-            }
         )
         Screen.IMPORT -> ImportAppsScreen(
             installedApps = installedApps,
@@ -1155,8 +1159,7 @@ private fun CloneXHomeScreen(
     onDeviceInfo: () -> Unit,
     onSettings: () -> Unit,
     onLaunchClone: (CloneEntry) -> Unit,
-    onCloneOptions: (CloneEntry) -> Unit,
-    onAddAnotherClone: (CloneEntry) -> Unit
+    onCloneOptions: (CloneEntry) -> Unit
 ) {
     var showFabMenu by remember { mutableStateOf(false) }
 
