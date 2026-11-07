@@ -174,6 +174,17 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.constraintlayout)
 
+    // v3.0 fix (run #94): Bcore's remaining transitive deps — an AAR
+    // carries none of them. material + toml4j + FreeReflection are
+    // Bcore's own declared deps (its build.gradle); black-reflection
+    // is Bcore's java-library module, built as a JAR in CI (see the
+    // workflow) because it is a real runtime dependency (hidden-API
+    // bypass) — a -dontwarn would hide classes the engine needs live.
+    implementation(libs.material)
+    implementation(libs.toml4j)
+    implementation(libs.free.reflection)
+    implementation(files("libs/black-reflection.jar"))
+
     // v3.0: NewBlackbox virtual engine (ALEX5402/NewBlackbox, Apache-2.0).
     // The Bcore AAR is built in CI from the pinned upstream commit plus
     // the MaxCloner split-APK patch — see .github/workflows/build.yml
