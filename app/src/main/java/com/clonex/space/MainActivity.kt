@@ -804,7 +804,7 @@ private fun CloneXApp(
 
     // --- dialogs ------------------------------------------------------------
 
-    cloneOptions?.let    cloneOptions?.let { entry ->
+    cloneOptions?.let { entry ->
         AlertDialog(
             onDismissRequest = { cloneOptions = null },
             title = { Text(entry.label) },
