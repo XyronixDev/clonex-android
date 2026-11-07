@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // v3.0: FreeReflection (com.github.tiann) is published via JitPack.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
