@@ -133,10 +133,24 @@ jobs:
           ls -la Bcore/build/outputs/aar/
           test -f Bcore/build/outputs/aar/Bcore-release.aar
 
-      - name: Copy engine AAR into CloneX
+      # v3.0 fix (run #94): Bcore's classes reference the black-reflection
+      # module (top.niunaijun.blackreflection.*) at runtime, but the AAR
+      # does not bundle it — it is a plain java-library module producing
+      # a JAR. Build it here so R8 sees the real classes (a -dontwarn
+      # would hide a runtime dependency the engine needs live).
+      - name: Build black-reflection JAR (JDK 21, Gradle 8.14.5)
+        timeout-minutes: 10
+        run: |
+          cd newblackbox
+          ./gradlew :black-reflection:jar --console=plain --stacktrace
+          ls -la black-reflection/build/libs/
+          test -f black-reflection/build/libs/black-reflection.jar
+
+      - name: Copy engine AAR + black-reflection JAR into CloneX
         run: |
           mkdir -p app/libs
           cp newblackbox/Bcore/build/outputs/aar/Bcore-release.aar app/libs/bcore-release.aar
+          cp newblackbox/black-reflection/build/libs/black-reflection.jar app/libs/black-reflection.jar
           echo "--- app/libs ---"
           ls -la app/libs/
 
